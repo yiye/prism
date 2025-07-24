@@ -233,7 +233,7 @@ export class ToolScheduler {
         `Tool '${toolName}' not found`,
         startTime
       );
-      this.updateFailureStats(toolName, startTime);
+      this.updateFailureStats(toolName);
       return result;
     }
 
@@ -245,7 +245,7 @@ export class ToolScheduler {
         `Tool '${toolName}' is disabled`,
         startTime
       );
-      this.updateFailureStats(toolName, startTime);
+      this.updateFailureStats(toolName);
       return result;
     }
 
@@ -256,7 +256,7 @@ export class ToolScheduler {
         `Rate limit exceeded for tool '${toolName}'`,
         startTime
       );
-      this.updateFailureStats(toolName, startTime);
+      this.updateFailureStats(toolName);
       return result;
     }
 
@@ -269,7 +269,7 @@ export class ToolScheduler {
         `Parameter validation failed: ${errorMsg}`,
         startTime
       );
-      this.updateFailureStats(toolName, startTime);
+      this.updateFailureStats(toolName);
       return result;
     }
 
@@ -284,7 +284,7 @@ export class ToolScheduler {
       const abortController = new AbortController();
       const effectiveSignal = options.signal || abortController.signal;
       
-      const executePromise = tool.execute(params as any, effectiveSignal);
+      const executePromise = tool.execute(params as never, effectiveSignal);
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
           abortController.abort();
@@ -302,12 +302,12 @@ export class ToolScheduler {
         ...result,
         toolName,
         duration,
-        success: result.success !== false,
+        success: 'success' in result ? result.success !== false : true,
       };
 
     } catch (error) {
       const duration = Date.now() - startTime;
-      this.updateFailureStats(toolName, startTime);
+      this.updateFailureStats(toolName);
 
       return this.createErrorResult(
         toolName,
@@ -364,7 +364,7 @@ export class ToolScheduler {
   /**
    * 更新失败统计
    */
-  private updateFailureStats(toolName: ToolName, startTime: number): void {
+  private updateFailureStats(toolName: ToolName): void {
     const stats = this.executionStats.get(toolName);
     if (stats) {
       stats.failedCalls++;
@@ -393,8 +393,22 @@ export class ToolScheduler {
   /**
    * 获取工具统计信息
    */
-  public getStats(): Record<string, any> {
-    const stats: Record<string, any> = {};
+  public getStats(): Record<string, {
+    totalCalls: number;
+    successfulCalls: number;
+    failedCalls: number;
+    averageDuration: number;
+    lastExecution: number;
+    successRate: string;
+  }> {
+    const stats: Record<string, {
+      totalCalls: number;
+      successfulCalls: number;
+      failedCalls: number;
+      averageDuration: number;
+      lastExecution: number;
+      successRate: string;
+    }> = {};
     
     for (const [toolName, data] of this.executionStats) {
       stats[toolName] = {

@@ -3,16 +3,6 @@
  * 统一导出所有 Agent 相关的服务和组件
  */
 
-// Core Agent Components - V2 Architecture
-export {
-  type AgentResponse,
-  type AgentV2Options,
-  type AgentV2Options as AgentOptions,
-  CodeReviewAgentV2 as CodeReviewAgent,
-  createCodeReviewAgent,
-  createCodeReviewAgentV2,
-} from './core/agent-v2';
-
 // Legacy exports (for backward compatibility)
 export { CodeReviewAgent as CodeReviewAgentV1 } from './core/agent';
 

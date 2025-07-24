@@ -6,6 +6,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { ValidationResult } from '@/types';
+
 import {
   BaseTool,
   type ToolParams,
@@ -41,6 +43,9 @@ export interface GrepSearchResult extends ToolResult {
   total_matches: number;
   files_searched: number;
   has_more?: boolean;
+  llmContent?: string;
+  returnDisplay?: string;
+  error?: string;
 }
 
 /**
@@ -71,8 +76,9 @@ Features:
 
 This tool is essential for finding specific code patterns, functions, variables, or text across multiple files.`,
       
-      parameterSchema: {
+      schema: {
         type: 'object',
+        description: 'Search for a regular expression pattern within the content of files in a specified directory (or current working directory).',
         properties: {
           pattern: {
             type: 'string',
@@ -390,7 +396,8 @@ This tool is essential for finding specific code patterns, functions, variables,
     }
   }
 
-  async execute(params: GrepSearchParams): Promise<GrepSearchResult> {
+  protected async executeImpl(params: GrepSearchParams, _signal: AbortSignal): Promise<GrepSearchResult> {
+    void _signal;
     const {
       pattern,
       path: searchPath,
@@ -406,6 +413,7 @@ This tool is essential for finding specific code patterns, functions, variables,
     const pathValidation = this.validateSearchPath(searchPath);
     if (!pathValidation.isValid) {
       return {
+        output: `Error: ${pathValidation.error}`,
         success: false,
         pattern,
         search_path: searchPath || '.',
@@ -422,6 +430,7 @@ This tool is essential for finding specific code patterns, functions, variables,
     const patternValidation = this.validatePattern(pattern);
     if (!patternValidation.isValid) {
       return {
+        output: `Error: ${patternValidation.error}`,
         success: false,
         pattern,
         search_path: pathValidation.resolvedPath,
@@ -466,6 +475,7 @@ This tool is essential for finding specific code patterns, functions, variables,
 
       // 6. 构建结果
       const result: GrepSearchResult = {
+        output: this.formatLLMContent(pattern, resolvedPath, allMatches, filesToSearch.length, matchCount >= max_results),
         success: true,
         pattern,
         search_path: resolvedPath,
@@ -483,6 +493,7 @@ This tool is essential for finding specific code patterns, functions, variables,
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       
       return {
+        output: `Failed to search for pattern '${pattern}' in '${resolvedPath}': ${errorMessage}`,
         success: false,
         pattern,
         search_path: resolvedPath,
@@ -601,24 +612,24 @@ This tool is essential for finding specific code patterns, functions, variables,
     return display;
   }
 
-  validateParams(params: GrepSearchParams): string | null {
+  protected validateSpecific(params: GrepSearchParams): ValidationResult {
     if (!params.pattern) {
-      return 'pattern is required';
+      return { valid: false, error: 'pattern is required' };
     }
     
     if (params.pattern.trim().length === 0) {
-      return 'pattern cannot be empty';
+      return { valid: false, error: 'pattern cannot be empty' };
     }
 
     if (params.max_results !== undefined && (params.max_results < 1 || params.max_results > 1000)) {
-      return 'max_results must be between 1 and 1000';
+      return { valid: false, error: 'max_results must be between 1 and 1000' };
     }
 
     if (params.context_lines !== undefined && (params.context_lines < 0 || params.context_lines > 10)) {
-      return 'context_lines must be between 0 and 10';
+      return { valid: false, error: 'context_lines must be between 0 and 10' };
     }
     
-    return null;
+    return { valid: true };
   }
 
   getDescription(params: GrepSearchParams): string {

@@ -5,6 +5,7 @@
  */
 
 import {
+  BaseToolConfig,
   Tool,
   ToolExecutionError,
   ToolResult,
@@ -33,19 +34,14 @@ export abstract class BaseTool<TParams = Record<string, unknown>, TResult extend
   public readonly canUpdateOutput: boolean;
 
   constructor(
-    name: string,
-    displayName: string,
-    description: string,
-    schema: ToolSchema,
-    isOutputMarkdown = false,
-    canUpdateOutput = false
+    config: BaseToolConfig
   ) {
-    this.name = name;
-    this.displayName = displayName;
-    this.description = description;
-    this.schema = schema;
-    this.isOutputMarkdown = isOutputMarkdown;
-    this.canUpdateOutput = canUpdateOutput;
+    this.name = config.name;
+    this.displayName = config.displayName;
+    this.description = config.description;
+    this.schema = config.schema;
+    this.isOutputMarkdown = config.isOutputMarkdown ?? false;
+    this.canUpdateOutput = config.canUpdateOutput ?? false;
   }
 
   /**
@@ -84,13 +80,13 @@ export abstract class BaseTool<TParams = Record<string, unknown>, TResult extend
    * 检查是否需要用户确认
    * 默认不需要确认，危险操作的工具应该重写此方法
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async shouldConfirm(params: TParams): Promise<boolean> {
     return false;
   }
 
   /**
-   * 执行工具逻辑
-   * 所有子类必须实现此方法
+   * 执行工具统一入口
    */
   async execute(
     params: TParams, 
@@ -136,6 +132,7 @@ export abstract class BaseTool<TParams = Record<string, unknown>, TResult extend
    * 获取工具描述信息
    * 用于在执行前向用户展示将要执行的操作
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   getDescription(params: TParams): string {
     return `${this.displayName}: ${this.description}`;
   }
@@ -144,6 +141,7 @@ export abstract class BaseTool<TParams = Record<string, unknown>, TResult extend
    * 子类特定的参数验证
    * 子类可以重写以提供更详细的验证逻辑
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   protected validateSpecific(params: TParams): ValidationResult {
     return { valid: true };
   }
@@ -189,7 +187,7 @@ export abstract class BaseTool<TParams = Record<string, unknown>, TResult extend
       output,
       metadata,
       artifacts: [],
-    } as TResult;
+    } as unknown as TResult;
   }
 
   /**
@@ -242,17 +240,16 @@ export abstract class BaseTool<TParams = Record<string, unknown>, TResult extend
 export abstract class ReadOnlyTool<TParams = Record<string, unknown>, TResult extends ToolResult = ToolResult> 
   extends BaseTool<TParams, TResult> {
   
-  constructor(
-    name: string,
-    displayName: string,
-    description: string,
-    schema: ToolSchema,
-    isOutputMarkdown = true
-  ) {
-    super(name, displayName, description, schema, isOutputMarkdown, false);
+  constructor(config: BaseToolConfig) {
+    super({
+      ...config,
+      isOutputMarkdown: config.isOutputMarkdown ?? true,
+      canUpdateOutput: false,
+    });
   }
 
   // 只读工具永远不需要确认
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async shouldConfirm(params: TParams): Promise<boolean> {
     return false;
   }
@@ -265,18 +262,16 @@ export abstract class ReadOnlyTool<TParams = Record<string, unknown>, TResult ex
 export abstract class ModifyingTool<TParams = Record<string, unknown>, TResult extends ToolResult = ToolResult> 
   extends BaseTool<TParams, TResult> {
   
-  constructor(
-    name: string,
-    displayName: string,
-    description: string,
-    schema: ToolSchema,
-    isOutputMarkdown = false,
-    canUpdateOutput = true
-  ) {
-    super(name, displayName, description, schema, isOutputMarkdown, canUpdateOutput);
+  constructor(config: BaseToolConfig) {
+    super({
+      ...config,
+      isOutputMarkdown: config.isOutputMarkdown ?? false,
+      canUpdateOutput: config.canUpdateOutput ?? true,
+    });
   }
 
   // 修改性工具默认需要确认，除非子类明确覆盖
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async shouldConfirm(params: TParams): Promise<boolean> {
     return true;
   }
@@ -284,6 +279,7 @@ export abstract class ModifyingTool<TParams = Record<string, unknown>, TResult e
   /**
    * 检查操作的风险级别
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   protected assessRisk(params: TParams): 'low' | 'medium' | 'high' {
     return 'medium'; // 默认中等风险
   }
@@ -321,9 +317,18 @@ export function createTool<TParams = Record<string, unknown>, TResult extends To
     shouldConfirm?: (params: TParams) => Promise<boolean>;
   }
 ): Tool<TParams, TResult> {
-  const BaseClass = config.readonly ? ReadOnlyTool : ModifyingTool;
-  
-  class DynamicTool extends BaseClass<TParams, TResult> {
+  class DynamicTool extends BaseTool<TParams, TResult> {
+    constructor() {
+      super({
+        name: config.name,
+        displayName: config.displayName,
+        description: config.description,
+        schema: config.schema,
+        isOutputMarkdown: config.isOutputMarkdown,
+        canUpdateOutput: config.canUpdateOutput,
+      });
+    }
+
     protected async executeImpl(
       params: TParams,
       signal: AbortSignal,
@@ -337,16 +342,12 @@ export function createTool<TParams = Record<string, unknown>, TResult extends To
     }
 
     async shouldConfirm(params: TParams): Promise<boolean> {
-      return config.shouldConfirm ? config.shouldConfirm(params) : super.shouldConfirm(params);
+      if (config.shouldConfirm) {
+        return config.shouldConfirm(params);
+      }
+      return config.readonly ? false : true;
     }
   }
   
-  return new DynamicTool(
-    config.name,
-    config.displayName,
-    config.description,
-    config.schema,
-    config.isOutputMarkdown,
-    config.canUpdateOutput
-  );
+  return new DynamicTool();
 } 

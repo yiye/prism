@@ -188,7 +188,7 @@ export class AgentSessionManager {
    */
   private convertAgentEventToSSE(event: StreamEvent, sessionId: string): SSEEvent {
     return {
-      type: event.type as any,
+      type: event.type as SSEEvent['type'],
       data: {
         ...event.data,
         sessionId,

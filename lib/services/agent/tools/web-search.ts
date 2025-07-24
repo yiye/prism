@@ -10,7 +10,10 @@ import {
   ValidationResult,
 } from '../../../../types';
 import { ReadOnlyTool } from './base-tool';
-import { createWebFetchTool } from './web-fetch';
+import {
+  createWebFetchTool,
+  WebFetchTool,
+} from './web-fetch';
 
 interface WebSearchParams {
   query: string;
@@ -32,6 +35,7 @@ interface SearchResult {
 }
 
 interface WebSearchResult extends ToolResult {
+  success: boolean;
   metadata: {
     query: string;
     totalResults: number;
@@ -92,13 +96,13 @@ export class WebSearchTool extends ReadOnlyTool<WebSearchParams, WebSearchResult
       description: 'Search the web using search engines',
     };
 
-    super(
-      'web_search',
-      'Web Search',
-      'Search the web for information using search engines',
+    super({
+      name: 'web_search',
+      displayName: 'Web Search',
+      description: 'Search the web for information using search engines',
       schema,
-      true
-    );
+      isOutputMarkdown: true,
+    });
 
     // 初始化搜索引擎
     this.searchEngines = this.initializeSearchEngines(apiKeys);
@@ -150,7 +154,7 @@ export class WebSearchTool extends ReadOnlyTool<WebSearchParams, WebSearchResult
     return { valid: true };
   }
 
-  protected async executeSpecific(
+  protected async executeImpl(
     params: WebSearchParams,
     signal: AbortSignal
   ): Promise<WebSearchResult> {
@@ -233,7 +237,7 @@ export class WebSearchTool extends ReadOnlyTool<WebSearchParams, WebSearchResult
  * 搜索引擎接口
  */
 abstract class SearchEngine {
-  constructor(protected webFetch: any) {}
+  constructor(protected webFetch: WebFetchTool) {}
   
   abstract getName(): string;
   abstract search(params: WebSearchParams, signal: AbortSignal): Promise<SearchResult[]>;
@@ -246,7 +250,7 @@ class GoogleSearchEngine extends SearchEngine {
   constructor(
     private apiKey: string,
     private cseId: string,
-    webFetch: any
+    webFetch: WebFetchTool
   ) {
     super(webFetch);
   }
@@ -290,13 +294,16 @@ class GoogleSearchEngine extends SearchEngine {
       return [];
     }
 
-    return data.items.map((item: any): SearchResult => ({
-      title: item.title,
-      url: item.link,
-      snippet: item.snippet,
-      displayUrl: item.displayLink,
-      source: item.displayLink,
-    }));
+    return data.items.map((item: unknown): SearchResult => {
+      const googleItem = item as { title: string; link: string; snippet: string; displayLink: string };
+      return {
+        title: googleItem.title,
+        url: googleItem.link,
+        snippet: googleItem.snippet,
+        displayUrl: googleItem.displayLink,
+        source: googleItem.displayLink,
+      };
+    });
   }
 }
 
@@ -306,7 +313,7 @@ class GoogleSearchEngine extends SearchEngine {
 class BingSearchEngine extends SearchEngine {
   constructor(
     private apiKey: string,
-    webFetch: any
+    webFetch: WebFetchTool
   ) {
     super(webFetch);
   }
@@ -351,14 +358,17 @@ class BingSearchEngine extends SearchEngine {
       return [];
     }
 
-    return data.webPages.value.map((item: any): SearchResult => ({
-      title: item.name,
-      url: item.url,
-      snippet: item.snippet,
-      displayUrl: item.displayUrl,
-      source: item.displayUrl,
-      publishedDate: item.dateLastCrawled,
-    }));
+    return data.webPages.value.map((item: unknown): SearchResult => {
+      const bingItem = item as { name: string; url: string; snippet: string; displayUrl: string; dateLastCrawled?: string };
+      return {
+        title: bingItem.name,
+        url: bingItem.url,
+        snippet: bingItem.snippet,
+        displayUrl: bingItem.displayUrl,
+        source: bingItem.displayUrl,
+        publishedDate: bingItem.dateLastCrawled,
+      };
+    });
   }
 }
 
@@ -394,16 +404,22 @@ class DuckDuckGoSearchEngine extends SearchEngine {
     // 处理相关主题
     if (data.RelatedTopics && Array.isArray(data.RelatedTopics)) {
       const topics = data.RelatedTopics
-        .filter((topic: any) => topic.FirstURL && topic.Text)
+        .filter((topic: unknown) => {
+          const t = topic as { FirstURL?: string; Text?: string };
+          return t.FirstURL && t.Text;
+        })
         .slice(0, params.maxResults || 5);
 
-      results.push(...topics.map((topic: any): SearchResult => ({
-        title: topic.Text.split(' - ')[0] || topic.Text.substring(0, 50),
-        url: topic.FirstURL,
-        snippet: topic.Text,
-        displayUrl: this.extractDomain(topic.FirstURL),
-        source: this.extractDomain(topic.FirstURL),
-      })));
+      results.push(...topics.map((topic: unknown): SearchResult => {
+        const ddgTopic = topic as { FirstURL: string; Text: string };
+        return {
+          title: ddgTopic.Text.split(' - ')[0] || ddgTopic.Text.substring(0, 50),
+          url: ddgTopic.FirstURL,
+          snippet: ddgTopic.Text,
+          displayUrl: this.extractDomain(ddgTopic.FirstURL),
+          source: this.extractDomain(ddgTopic.FirstURL),
+        };
+      }));
     }
 
     // 如果没有相关主题，添加抽象信息

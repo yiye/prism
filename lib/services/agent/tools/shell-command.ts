@@ -7,6 +7,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
+import type { ValidationResult } from '../../../../types';
 import {
   BaseTool,
   type ToolParams,
@@ -27,6 +28,9 @@ export interface ShellCommandResult extends ToolResult {
   exit_code: number;
   stdout: string;
   stderr: string;
+  error?: string;
+  llmContent?: string;
+  returnDisplay?: string;
   execution_time: number;
   timeout_occurred?: boolean;
 }
@@ -170,8 +174,9 @@ export class ShellCommandTool extends BaseTool<ShellCommandParams, ShellCommandR
 
 This tool is designed for safe development operations only.`,
       
-      parameterSchema: {
+      schema: {
         type: 'object',
+        description: 'Execute shell commands in a secure environment',
         properties: {
           command: {
             type: 'string',
@@ -337,7 +342,10 @@ Examples:
     });
   }
 
-  async execute(params: ShellCommandParams): Promise<ShellCommandResult> {
+  protected async executeImpl(params: ShellCommandParams, _signal: AbortSignal): Promise<ShellCommandResult> {
+    // Note: signal parameter is required by base class but not currently used for command cancellation
+    void _signal;
+    
     const {
       command,
       working_directory,
@@ -349,6 +357,7 @@ Examples:
     const securityCheck = SecurityConfig.isCommandAllowed(command);
     if (!securityCheck.allowed) {
       return {
+        output: `Command blocked for security: ${securityCheck.reason}`,
         success: false,
         command,
         working_directory: working_directory || this.projectRoot,
@@ -366,6 +375,7 @@ Examples:
     const dirValidation = this.validateWorkingDirectory(working_directory);
     if (!dirValidation.isValid) {
       return {
+        output: `Error: ${dirValidation.error}`,
         success: false,
         command,
         working_directory: working_directory || this.projectRoot,
@@ -390,6 +400,7 @@ Examples:
 
       // 5. 构建响应
       const shellResult: ShellCommandResult = {
+        output: this.formatDisplayContent(command, resolvedPath, result),
         success: result.exitCode === 0 && !result.timeoutOccurred,
         command,
         working_directory: resolvedPath,
@@ -408,6 +419,7 @@ Examples:
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       
       return {
+        output: `Failed to execute command '${command}': ${errorMessage}`,
         success: false,
         command,
         working_directory: resolvedPath,
@@ -422,7 +434,13 @@ Examples:
     }
   }
 
-  private formatLLMContent(command: string, result: any): string {
+  private formatLLMContent(command: string, result: {
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+    executionTime: number;
+    timeoutOccurred: boolean;
+  }): string {
     let content = `Command execution: ${command}\n`;
     content += `Exit code: ${result.exitCode}\n`;
     content += `Execution time: ${result.executionTime}ms\n`;
@@ -442,7 +460,13 @@ Examples:
     return content;
   }
 
-  private formatDisplayContent(command: string, workingDir: string, result: any): string {
+  private formatDisplayContent(command: string, workingDir: string, result: {
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+    executionTime: number;
+    timeoutOccurred: boolean;
+  }): string {
     const relativePath = path.relative(this.projectRoot, workingDir);
     const icon = result.exitCode === 0 && !result.timeoutOccurred ? '✅' : '❌';
     
@@ -469,20 +493,20 @@ Examples:
     return display;
   }
 
-  validateParams(params: ShellCommandParams): string | null {
+  protected validateSpecific(params: ShellCommandParams): ValidationResult {
     if (!params.command) {
-      return 'command is required';
+      return { valid: false, error: 'command is required' };
     }
     
     if (params.command.trim().length === 0) {
-      return 'command cannot be empty';
+      return { valid: false, error: 'command cannot be empty' };
     }
 
     if (params.timeout !== undefined && (params.timeout < 1 || params.timeout > 300)) {
-      return 'timeout must be between 1 and 300 seconds';
+      return { valid: false, error: 'timeout must be between 1 and 300 seconds' };
     }
     
-    return null;
+    return { valid: true };
   }
 
   getDescription(params: ShellCommandParams): string {

@@ -79,12 +79,13 @@ export class CodeAnalyzerTool extends ReadOnlyTool<CodeAnalyzerParams, CodeAnaly
     };
 
     super(
-      'analyze_code',
-      'Code Analyzer',
-      'Analyze code quality, detect issues, and provide improvement suggestions',
+    {
+      name: 'analyze_code',
+      displayName: 'Code Analyzer',
+      description: 'Analyze code quality, detect issues, and provide improvement suggestions',
       schema,
-      true
-    );
+      isOutputMarkdown: true,
+    });
 
     this.projectRoot = projectRoot || process.cwd();
   }
@@ -671,8 +672,9 @@ export class CodeAnalyzerTool extends ReadOnlyTool<CodeAnalyzerParams, CodeAnaly
     issues: ReviewIssue[],
     suggestions: ReviewSuggestion[],
     metrics: ReviewMetrics,
-    filePaths: string[]
+    _filePaths: string[]
   ): string {
+    void _filePaths;
     const sections: string[] = [];
 
     // 概览

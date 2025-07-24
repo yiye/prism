@@ -35,6 +35,7 @@ interface FileContent {
 }
 
 interface ReadManyFilesResult extends ToolResult {
+  success: boolean;
   metadata: {
     totalFiles: number;
     successfulReads: number;
@@ -96,13 +97,13 @@ export class ReadManyFilesTool extends ReadOnlyTool<ReadManyFilesParams, ReadMan
       description: 'Read multiple files efficiently for code analysis',
     };
 
-    super(
-      'read_many_files',
-      'Read Many Files',
-      'Batch read multiple files for efficient code analysis',
+    super({
+      name: 'read_many_files',
+      displayName: 'Read Many Files',
+      description: 'Batch read multiple files for efficient code analysis',
       schema,
-      true
-    );
+      isModifying: false,
+    });
 
     this.projectRoot = projectRoot || process.cwd();
   }
@@ -143,7 +144,7 @@ export class ReadManyFilesTool extends ReadOnlyTool<ReadManyFilesParams, ReadMan
     return { valid: true };
   }
 
-  protected async executeSpecific(
+  protected async executeImpl(
     params: ReadManyFilesParams,
     signal: AbortSignal
   ): Promise<ReadManyFilesResult> {
@@ -314,7 +315,8 @@ export class ReadManyFilesTool extends ReadOnlyTool<ReadManyFilesParams, ReadMan
     return chunks;
   }
 
-  private formatOutput(results: FileContent[], params: ReadManyFilesParams): string {
+  private formatOutput(results: FileContent[], _params: ReadManyFilesParams): string {
+    void _params;
     let output = `# Batch File Reading Results\n\n`;
     
     const successful = results.filter(r => !r.error);

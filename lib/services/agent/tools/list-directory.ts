@@ -6,6 +6,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { ValidationResult } from '@/types';
+
 import {
   BaseTool,
   type ToolParams,
@@ -26,6 +28,7 @@ export interface DirectoryItem {
   size?: number;
   modified?: string;
   permissions?: string;
+  error?: string;
 }
 
 export interface ListDirectoryResult extends ToolResult {
@@ -34,10 +37,13 @@ export interface ListDirectoryResult extends ToolResult {
   items: DirectoryItem[];
   total_count: number;
   has_more?: boolean;
+  llmContent?: string;
+  returnDisplay?: string;
+  error?: string;
 }
 
 /**
- * ListDirectory 工具实现
+ * ListDirectory 工具实现``
  * 🌟 功能特性：
  * - 支持 gitignore 规则过滤
  * - 自定义忽略模式
@@ -63,7 +69,7 @@ Features:
 
 This tool is essential for exploring project structure and finding files.`,
       
-      parameterSchema: {
+      schema: {
         type: 'object',
         properties: {
           path: {
@@ -78,20 +84,18 @@ This tool is essential for exploring project structure and finding files.`,
           respect_git_ignore: {
             type: 'boolean',
             description: 'Whether to respect .gitignore patterns when listing files. Defaults to true.',
-            default: true,
           },
           show_hidden: {
             type: 'boolean',
             description: 'Whether to show hidden files and directories (starting with .). Defaults to false.',
-            default: false,
           },
           max_items: {
             type: 'number',
             description: 'Maximum number of items to return. Defaults to 1000 for performance.',
-            default: 1000,
           },
         },
         required: ['path'],
+        description: 'List files and directories in a specified path',
       },
     });
   }
@@ -262,11 +266,13 @@ This tool is essential for exploring project structure and finding files.`,
       return {
         name: itemName,
         type: 'file', // 默认类型
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
       };
     }
   }
 
-  async execute(params: ListDirectoryParams): Promise<ListDirectoryResult> {
+  protected async executeImpl(params: ListDirectoryParams, _signal: AbortSignal): Promise<ListDirectoryResult> {
+    void _signal;
     const { 
       path: dirPath, 
       ignore = [], 
@@ -278,7 +284,8 @@ This tool is essential for exploring project structure and finding files.`,
     // 1. 验证目录路径
     const pathValidation = this.validateDirectoryPath(dirPath);
     if (!pathValidation.isValid) {
-      return {
+      return  {
+        output: `Error: ${pathValidation.error}`,
         success: false,
         path: dirPath,
         items: [],
@@ -293,7 +300,7 @@ This tool is essential for exploring project structure and finding files.`,
 
     try {
       // 2. 收集忽略模式
-      let ignorePatterns = [...ignore];
+      const ignorePatterns = [...ignore];
       if (respect_git_ignore) {
         const gitIgnorePatterns = this.loadGitIgnorePatterns(resolvedPath);
         ignorePatterns.push(...gitIgnorePatterns);
@@ -334,6 +341,7 @@ This tool is essential for exploring project structure and finding files.`,
 
       // 6. 构建结果
       const result: ListDirectoryResult = {
+        output: this.formatLLMContent(resolvedPath, items, entries.length > max_items),
         success: true,
         path: resolvedPath,
         items,
@@ -349,6 +357,7 @@ This tool is essential for exploring project structure and finding files.`,
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       
       return {
+        output: `Failed to list directory '${resolvedPath}': ${errorMessage}`,
         success: false,
         path: resolvedPath,
         items: [],
@@ -464,20 +473,20 @@ This tool is essential for exploring project structure and finding files.`,
     return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
   }
 
-  validateParams(params: ListDirectoryParams): string | null {
+  protected validateSpecific(params: ListDirectoryParams): ValidationResult {
     if (!params.path) {
-      return 'path is required';
+      return { valid: false, error: 'path is required' };
     }
-    
+
     if (params.path.trim().length === 0) {
-      return 'path cannot be empty';
+      return { valid: false, error: 'path cannot be empty' };
     }
 
     if (params.max_items !== undefined && (params.max_items < 1 || params.max_items > 10000)) {
-      return 'max_items must be between 1 and 10000';
+      return { valid: false, error: 'max_items must be between 1 and 10000' };
     }
     
-    return null;
+    return { valid: true };
   }
 
   getDescription(params: ListDirectoryParams): string {

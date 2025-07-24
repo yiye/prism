@@ -70,13 +70,13 @@ export class FileReaderTool extends ReadOnlyTool<FileReaderParams, FileReaderRes
       description: 'Read file content for code review analysis',
     };
 
-    super(
-      'read_file',
-      'Read File',
-      'Read and analyze file content for code review',
+    super({
+      name: 'read_file',
+      displayName: 'Read File',
+      description: 'Read and analyze file content for code review',
       schema,
-      true
-    );
+      isOutputMarkdown: true,
+    });
 
     this.projectRoot = projectRoot || process.cwd();
   }

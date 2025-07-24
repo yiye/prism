@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { ValidationResult } from '../../../../types';
 import {
   BaseTool,
   type ToolParams,
@@ -23,6 +24,9 @@ export interface WriteFileResult extends ToolResult {
   file_path: string;
   bytes_written: number;
   created_directories?: string[];
+  error?: string;
+  llmContent?: string;
+  returnDisplay?: string;
 }
 
 /**
@@ -52,7 +56,7 @@ Features:
 
 The tool ensures safe file operations within the project directory.`,
       
-      parameterSchema: {
+      schema: {
         type: 'object',
         properties: {
           file_path: {
@@ -66,10 +70,10 @@ The tool ensures safe file operations within the project directory.`,
           create_directories: {
             type: 'boolean',
             description: 'Whether to create parent directories if they don\'t exist. Defaults to true.',
-            default: true,
           },
         },
         required: ['file_path', 'content'],
+        description: 'Write content to a file in the local filesystem',
       },
     });
   }
@@ -170,13 +174,15 @@ The tool ensures safe file operations within the project directory.`,
     }
   }
 
-  async execute(params: WriteFileParams): Promise<WriteFileResult> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  protected async executeImpl(params: WriteFileParams, signal: AbortSignal, updateOutput?: (output: string) => void): Promise<WriteFileResult> {
     const { file_path, content, create_directories = true } = params;
 
     // 1. 验证文件路径
     const pathValidation = this.validateFilePath(file_path);
     if (!pathValidation.isValid) {
       return {
+        output: `❌ **Write Failed**\n\nPath: \`${file_path}\`\nError: ${pathValidation.error}`,
         success: false,
         file_path: file_path,
         bytes_written: 0,
@@ -205,7 +211,9 @@ The tool ensures safe file operations within the project directory.`,
       const stats = await fs.promises.stat(resolvedPath);
 
       // 5. 构建成功响应
+      const successDisplay = this.formatSuccessDisplay(resolvedPath, stats.size, backupPath, createdDirectories);
       const result: WriteFileResult = {
+        output: successDisplay,
         success: true,
         file_path: resolvedPath,
         bytes_written: stats.size,
@@ -215,21 +223,23 @@ The tool ensures safe file operations within the project directory.`,
         }${
           createdDirectories.length > 0 ? ` (created directories: ${createdDirectories.join(', ')})` : ''
         }`,
-        returnDisplay: this.formatSuccessDisplay(resolvedPath, stats.size, backupPath, createdDirectories),
+        returnDisplay: successDisplay,
       };
 
       return result;
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      const errorDisplay = `❌ **Write Failed**\n\nPath: \`${resolvedPath}\`\nError: ${errorMessage}`;
       
       return {
+        output: errorDisplay,
         success: false,
         file_path: resolvedPath,
         bytes_written: 0,
         error: errorMessage,
         llmContent: `Failed to write file '${resolvedPath}': ${errorMessage}`,
-        returnDisplay: `❌ **Write Failed**\n\nPath: \`${resolvedPath}\`\nError: ${errorMessage}`,
+        returnDisplay: errorDisplay,
       };
     }
   }
@@ -259,20 +269,20 @@ The tool ensures safe file operations within the project directory.`,
     return display;
   }
 
-  validateParams(params: WriteFileParams): string | null {
+  protected validateSpecific(params: WriteFileParams): ValidationResult {
     if (!params.file_path) {
-      return 'file_path is required';
+      return { valid: false, error: 'file_path is required' };
     }
     
     if (typeof params.content !== 'string') {
-      return 'content must be a string';
+      return { valid: false, error: 'content must be a string' };
     }
     
     if (params.file_path.trim().length === 0) {
-      return 'file_path cannot be empty';
+      return { valid: false, error: 'file_path cannot be empty' };
     }
     
-    return null;
+    return { valid: true };
   }
 
   getDescription(params: WriteFileParams): string {

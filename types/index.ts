@@ -59,6 +59,7 @@ export interface ToolSchemaProperty {
   enum?: string[];
   items?: ToolSchemaProperty;
   properties?: Record<string, ToolSchemaProperty>;
+  default?: unknown;
 }
 
 export interface ToolSchema {
@@ -66,6 +67,17 @@ export interface ToolSchema {
   properties: Record<string, ToolSchemaProperty>;
   required: string[];
   description: string;
+}
+
+export interface BaseToolConfig {
+  name: string;
+  displayName: string;
+  description: string;
+  schema: ToolSchema;
+  isOutputMarkdown?: boolean;
+  canUpdateOutput?: boolean;
+  projectRoot?: string;
+  [key: string]: unknown; // 允许扩展配置
 }
 
 export interface ValidationResult {

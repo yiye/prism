@@ -8,6 +8,8 @@ import path from 'node:path';
 
 import { glob } from 'glob';
 
+import { ValidationResult } from '@/types';
+
 import {
   BaseTool,
   type ToolParams,
@@ -37,6 +39,9 @@ export interface GlobSearchResult extends ToolResult {
   matches: FileMatch[];
   total_matches: number;
   has_more?: boolean;
+  llmContent?: string;
+  returnDisplay?: string;
+  error?: string;
 }
 
 /**
@@ -71,8 +76,9 @@ Examples:
 - "src/**/*.{ts,tsx}" - TypeScript files in src directory
 - "test/**/*" - All files in test directory`,
       
-      parameterSchema: {
+      schema: {
         type: 'object',
+        description: 'Search for files and directories that match a glob pattern within the specified directory.',
         properties: {
           pattern: {
             type: 'string',
@@ -282,7 +288,7 @@ Examples: "*.js", "src/**/*.ts", "**/*.{js,ts,jsx,tsx}", "test/**/test-*.js"`,
     }
   }
 
-  async execute(params: GlobSearchParams): Promise<GlobSearchResult> {
+  async executeImpl(params: GlobSearchParams): Promise<GlobSearchResult> {
     const {
       pattern,
       base_path,
@@ -296,6 +302,7 @@ Examples: "*.js", "src/**/*.ts", "**/*.{js,ts,jsx,tsx}", "test/**/test-*.js"`,
     const pathValidation = this.validateBasePath(base_path);
     if (!pathValidation.isValid) {
       return {
+        output: `Error: ${pathValidation.error}`,
         success: false,
         pattern,
         base_path: base_path || '.',
@@ -311,7 +318,7 @@ Examples: "*.js", "src/**/*.ts", "**/*.{js,ts,jsx,tsx}", "test/**/test-*.js"`,
 
     try {
       // 2. 收集忽略模式
-      let allIgnorePatterns = [...this.getDefaultIgnorePatterns(), ...ignore];
+      const allIgnorePatterns = [...this.getDefaultIgnorePatterns(), ...ignore];
       
       if (respect_git_ignore) {
         const gitIgnorePatterns = this.loadGitIgnorePatterns(resolvedPath);
@@ -343,6 +350,7 @@ Examples: "*.js", "src/**/*.ts", "**/*.{js,ts,jsx,tsx}", "test/**/test-*.js"`,
 
       // 5. 构建结果
       const result: GlobSearchResult = {
+        output: this.formatLLMContent(pattern, resolvedPath, matches, hasMore),
         success: true,
         pattern,
         base_path: resolvedPath,
@@ -357,8 +365,9 @@ Examples: "*.js", "src/**/*.ts", "**/*.{js,ts,jsx,tsx}", "test/**/test-*.js"`,
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      
+
       return {
+        output: `Failed to search for pattern '${pattern}' in '${resolvedPath}': ${errorMessage}`,
         success: false,
         pattern,
         base_path: resolvedPath,
@@ -500,20 +509,20 @@ Examples: "*.js", "src/**/*.ts", "**/*.{js,ts,jsx,tsx}", "test/**/test-*.js"`,
     return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
   }
 
-  validateParams(params: GlobSearchParams): string | null {
+  protected validateSpecific(params: GlobSearchParams): ValidationResult {
     if (!params.pattern) {
-      return 'pattern is required';
+      return { valid: false, error: 'pattern is required' };
     }
     
     if (params.pattern.trim().length === 0) {
-      return 'pattern cannot be empty';
+      return { valid: false, error: 'pattern cannot be empty' };
     }
 
     if (params.max_results !== undefined && (params.max_results < 1 || params.max_results > 5000)) {
-      return 'max_results must be between 1 and 5000';
+      return { valid: false, error: 'max_results must be between 1 and 5000' };
     }
     
-    return null;
+    return { valid: true };
   }
 
   getDescription(params: GlobSearchParams): string {

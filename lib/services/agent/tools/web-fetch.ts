@@ -4,8 +4,8 @@
  * 用于发送 HTTP 请求和获取网络资源
  */
 
-import * as https from 'https';
 import * as http from 'http';
+import * as https from 'https';
 import { URL } from 'url';
 
 import {
@@ -26,6 +26,7 @@ interface WebFetchParams {
 }
 
 interface WebFetchResult extends ToolResult {
+  success: boolean;
   metadata: {
     url: string;
     method: string;
@@ -86,13 +87,13 @@ export class WebFetchTool extends ReadOnlyTool<WebFetchParams, WebFetchResult> {
       description: 'Fetch content from a web URL using HTTP/HTTPS',
     };
 
-    super(
-      'web_fetch',
-      'Web Fetch',
-      'Fetch content from web URLs with HTTP/HTTPS support',
+    super({
+      name: 'web_fetch',
+      displayName: 'Web Fetch',
+      description: 'Fetch content from web URLs with HTTP/HTTPS support',
       schema,
-      true
-    );
+      isOutputMarkdown: true,
+    });
 
     this.allowedDomains = allowedDomains ? new Set(allowedDomains) : undefined;
   }
@@ -143,7 +144,7 @@ export class WebFetchTool extends ReadOnlyTool<WebFetchParams, WebFetchResult> {
     }
   }
 
-  protected async executeSpecific(
+  protected async executeImpl(
     params: WebFetchParams,
     signal: AbortSignal
   ): Promise<WebFetchResult> {
@@ -162,7 +163,7 @@ export class WebFetchTool extends ReadOnlyTool<WebFetchParams, WebFetchResult> {
       headers: {
         'User-Agent': 'Agent-WebFetch/1.0',
         ...params.headers,
-      },
+      } as Record<string, string>,
       timeout,
     };
 
@@ -244,7 +245,7 @@ export class WebFetchTool extends ReadOnlyTool<WebFetchParams, WebFetchResult> {
 
   private async makeRequest(
     url: string,
-    options: any,
+    options: http.RequestOptions,
     body?: string,
     signal?: AbortSignal
   ): Promise<{

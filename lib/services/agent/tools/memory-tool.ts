@@ -5,8 +5,8 @@
  */
 
 import * as fs from 'fs/promises';
-import * as path from 'path';
 import { homedir } from 'os';
+import * as path from 'path';
 
 import {
   ToolResult,
@@ -36,6 +36,7 @@ interface MemoryEntry {
 }
 
 interface MemoryResult extends ToolResult {
+  success: boolean;
   metadata: {
     action: string;
     totalEntries?: number;
@@ -91,13 +92,13 @@ export class MemoryTool extends ModifyingTool<MemoryParams, MemoryResult> {
       description: 'Save, retrieve, search, or manage long-term memories',
     };
 
-    super(
-      'memory',
-      'Memory Tool',
-      'Long-term memory storage and retrieval system',
+    super({
+      name: 'memory',
+      displayName: 'Memory Tool',
+      description: 'Long-term memory storage and retrieval system',
       schema,
-      true
-    );
+      isOutputMarkdown: true,
+    });
 
     // 设置记忆存储路径
     this.memoryDir = projectRoot 
@@ -159,10 +160,11 @@ export class MemoryTool extends ModifyingTool<MemoryParams, MemoryResult> {
     return { valid: true };
   }
 
-  protected async executeSpecific(
+  protected async executeImpl(
     params: MemoryParams,
-    signal: AbortSignal
+    _signal: AbortSignal
   ): Promise<MemoryResult> {
+    void _signal;
     // 确保记忆目录存在
     await this.ensureMemoryDir();
 
@@ -228,7 +230,7 @@ export class MemoryTool extends ModifyingTool<MemoryParams, MemoryResult> {
     // 检查是否达到最大条目数
     if (memories.length >= this.maxEntries) {
       // 删除最旧的低重要性记忆
-      const sorted = memories.sort((a, b) => {
+      memories.sort((a, b) => {
         if (a.importance !== b.importance) {
           const importanceOrder = { low: 0, medium: 1, high: 2 };
           return importanceOrder[a.importance] - importanceOrder[b.importance];

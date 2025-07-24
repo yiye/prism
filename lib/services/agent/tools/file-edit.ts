@@ -4,9 +4,9 @@
  * 用于智能文件编辑和修改
  */
 
+import * as diff from 'diff';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as diff from 'diff';
 
 import {
   ToolResult,
@@ -29,6 +29,10 @@ interface FileEditParams {
 }
 
 interface EditResult extends ToolResult {
+  success: boolean;
+  llmContent?: string;
+  returnDisplay?: string;
+  error?: string;
   metadata: {
     operation: string;
     originalSize: number;
@@ -111,13 +115,13 @@ export class FileEditTool extends ModifyingTool<FileEditParams, EditResult> {
       description: 'Edit files with various operations: replace, insert, append, prepend, delete, patch',
     };
 
-    super(
-      'file_edit',
-      'File Edit',
-      'Intelligent file editing with backup and diff support',
+    super({
+      name: 'file_edit',
+      displayName: 'File Edit',
+      description: 'Intelligent file editing with backup and diff support',
       schema,
-      true
-    );
+      isOutputMarkdown: true,
+    });
 
     this.projectRoot = projectRoot || process.cwd();
   }
@@ -204,10 +208,11 @@ export class FileEditTool extends ModifyingTool<FileEditParams, EditResult> {
     return { valid: true };
   }
 
-  protected async executeSpecific(
+  protected async executeImpl(
     params: FileEditParams,
-    signal: AbortSignal
+    _signal: AbortSignal
   ): Promise<EditResult> {
+    void _signal;
     const absolutePath = this.resolvePath(params.path);
 
     // 安全性检查
@@ -361,7 +366,7 @@ export class FileEditTool extends ModifyingTool<FileEditParams, EditResult> {
       let result = originalContent;
       for (const patch of patches) {
         result = diff.applyPatch(result, patch) as string;
-        if (result === false) {
+        if (typeof result === 'boolean' && result === false) {
           throw new Error('Failed to apply patch');
         }
       }
@@ -411,7 +416,12 @@ export class FileEditTool extends ModifyingTool<FileEditParams, EditResult> {
     params: FileEditParams,
     originalContent: string,
     newContent: string,
-    diffResult: any,
+    diffResult: {
+      additions: number;
+      deletions: number;
+      changes: number;
+      unifiedDiff: string;
+    },
     backupPath?: string
   ): string {
     let output = `# File Edit Result\n\n`;
