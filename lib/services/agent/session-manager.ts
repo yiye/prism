@@ -4,19 +4,17 @@
  * 重构后支持 ToolRegistry + ToolScheduler 架构
  */
 
-import {
-  buildContextualPrompt,
-  getGlobalConfigManager,
-} from '../prompt-manager';
+import type { StreamEvent } from '../../../types';
+import { getGlobalConfigManager } from '../../config/agent-config';
+import { buildContextualPrompt } from '../prompt-manager';
 import {
   type AgentOptions,
   CodeReviewAgent,
   createCodeReviewAgent,
-  type StreamEvent,
 } from './core/agent';
 import {
-  createCodeReviewToolRegistry,
   createDefaultToolScheduler,
+  createEnhancedCodeReviewToolRegistry,
 } from './index';
 
 export interface SessionConfig {
@@ -78,7 +76,7 @@ export class AgentSessionManager {
       });
 
       // 🎯 新架构：创建工具注册表和调度器
-      const toolRegistry = createCodeReviewToolRegistry(projectPath);
+      const toolRegistry = createEnhancedCodeReviewToolRegistry(projectPath);
       const toolScheduler = createDefaultToolScheduler(projectPath);
 
       // 创建 Agent 实例（使用重构后的构造函数）

@@ -10,6 +10,10 @@ import {
   type ToolResult,
 } from './base-tool';
 import {
+  createFileEditTool,
+  FileEditTool,
+} from './file-edit';
+import {
   createFileReaderTool,
   type FileReaderTool,
 } from './file-reader';
@@ -26,22 +30,44 @@ import {
   ListDirectoryTool,
 } from './list-directory';
 import {
+  createMemoryTool,
+  MemoryTool,
+} from './memory-tool';
+import {
+  createReadManyFilesTool,
+  ReadManyFilesTool,
+} from './read-many-files';
+import {
   createShellCommandTool,
   ShellCommandTool,
 } from './shell-command';
+// 新增工具导入
+import {
+  createWebFetchTool,
+  WebFetchTool,
+} from './web-fetch';
+import {
+  createWebSearchTool,
+  WebSearchTool,
+} from './web-search';
 import {
   createWriteFileTool,
   WriteFileTool,
 } from './write-file';
 
-// 工具类型定义
+// 工具类型定义 - 更新包含新工具
 export type ToolName = 
   | 'write_file'
   | 'list_directory'
   | 'search_file_content'
   | 'find_files'
   | 'execute_shell_command'
-  | 'read_file';
+  | 'read_file'
+  | 'web_fetch'
+  | 'web_search'
+  | 'memory'
+  | 'read_many_files'
+  | 'file_edit';
 
 export type ToolInstance = 
   | WriteFileTool
@@ -49,7 +75,12 @@ export type ToolInstance =
   | GrepSearchTool
   | GlobSearchTool
   | ShellCommandTool
-  | FileReaderTool;
+  | FileReaderTool
+  | WebFetchTool
+  | WebSearchTool
+  | MemoryTool
+  | ReadManyFilesTool
+  | FileEditTool;
 
 /**
  * 工具配置接口
@@ -69,6 +100,13 @@ export interface ToolSchedulerConfig {
   tools: Partial<Record<ToolName, ToolConfig>>;
   globalTimeout?: number;
   maxConcurrentTools?: number;
+  // 新工具的配置选项
+  webSearchApiKeys?: {
+    googleApiKey?: string;
+    googleCseId?: string;
+    bingApiKey?: string;
+  };
+  allowedDomains?: string[]; // 用于 web_fetch
 }
 
 /**
@@ -98,18 +136,18 @@ export interface ExecutionOptions {
  * - 速率限制和超时管理
  * - 错误处理和重试机制
  * - 性能监控和审计日志
- * - 安全性检查和权限控制
  */
 export class ToolScheduler {
-  private tools = new Map<ToolName, ToolInstance>();
-  private config: ToolSchedulerConfig;
-  private rateLimits = new Map<ToolName, number[]>();
-  private executionStats = new Map<ToolName, {
+  private readonly tools: Map<ToolName, ToolInstance> = new Map();
+  private readonly config: ToolSchedulerConfig;
+  private readonly rateLimiters: Map<ToolName, number[]> = new Map();
+  private readonly executionStats: Map<ToolName, {
     totalCalls: number;
-    successCalls: number;
+    successfulCalls: number;
     failedCalls: number;
-    totalDuration: number;
-  }>();
+    averageDuration: number;
+    lastExecution: number;
+  }> = new Map();
 
   constructor(config: ToolSchedulerConfig) {
     this.config = config;
@@ -118,18 +156,27 @@ export class ToolScheduler {
   }
 
   /**
-   * 初始化所有工具
+   * 初始化所有工具 - 包含新工具
    */
   private initializeTools(): void {
     const { projectRoot } = this.config;
 
-    // 注册所有核心工具
+    // 注册原有工具
     this.registerTool('write_file', createWriteFileTool(projectRoot));
     this.registerTool('list_directory', createListDirectoryTool(projectRoot));
     this.registerTool('search_file_content', createGrepSearchTool(projectRoot));
     this.registerTool('find_files', createGlobSearchTool(projectRoot));
     this.registerTool('execute_shell_command', createShellCommandTool(projectRoot));
     this.registerTool('read_file', createFileReaderTool(projectRoot));
+
+    // 注册新工具
+    this.registerTool('web_fetch', createWebFetchTool(this.config.allowedDomains));
+    this.registerTool('web_search', createWebSearchTool(this.config.webSearchApiKeys));
+    this.registerTool('memory', createMemoryTool(projectRoot));
+    this.registerTool('read_many_files', createReadManyFilesTool(projectRoot));
+    this.registerTool('file_edit', createFileEditTool(projectRoot));
+
+    console.log(`🛠️ Initialized ToolScheduler with ${this.tools.size} tools`);
   }
 
   /**
@@ -139,9 +186,10 @@ export class ToolScheduler {
     for (const toolName of this.tools.keys()) {
       this.executionStats.set(toolName, {
         totalCalls: 0,
-        successCalls: 0,
+        successfulCalls: 0,
         failedCalls: 0,
-        totalDuration: 0,
+        averageDuration: 0,
+        lastExecution: 0,
       });
     }
   }
@@ -213,11 +261,12 @@ export class ToolScheduler {
     }
 
     // 4. 验证参数
-    const validation = tool.validateParams(params as any);
-    if (!validation.valid) {
+    const validation = tool.validateParams(params as never);
+    if (!validation || typeof validation === 'string' || !validation.valid) {
+      const errorMsg = typeof validation === 'string' ? validation : validation?.error || 'Parameter validation failed';
       const result = this.createErrorResult(
         toolName,
-        `Parameter validation failed: ${validation.error}`,
+        `Parameter validation failed: ${errorMsg}`,
         startTime
       );
       this.updateFailureStats(toolName, startTime);
@@ -251,19 +300,21 @@ export class ToolScheduler {
 
       return {
         ...result,
-        success: true,
         toolName,
         duration,
+        success: result.success !== false,
       };
 
     } catch (error) {
       const duration = Date.now() - startTime;
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      
-      // 更新失败统计
       this.updateFailureStats(toolName, startTime);
 
-      return this.createErrorResult(toolName, errorMessage, startTime);
+      return this.createErrorResult(
+        toolName,
+        error instanceof Error ? error.message : String(error),
+        startTime,
+        duration
+      );
     }
   }
 
@@ -277,43 +328,23 @@ export class ToolScheduler {
     }
 
     const now = Date.now();
-    const windowStart = now - 60000; // 1分钟窗口
+    const oneMinuteAgo = now - 60000;
     
-    // 获取当前工具的执行记录
-    let executions = this.rateLimits.get(toolName) || [];
+    let rateLimitData = this.rateLimiters.get(toolName) || [];
     
-    // 清理过期记录
-    executions = executions.filter(time => time > windowStart);
+    // 清理过期的时间戳
+    rateLimitData = rateLimitData.filter(timestamp => timestamp > oneMinuteAgo);
     
     // 检查是否超过限制
-    if (executions.length >= toolConfig.rateLimitPerMinute) {
+    if (rateLimitData.length >= toolConfig.rateLimitPerMinute) {
       return false;
     }
-
-    // 记录当前执行
-    executions.push(now);
-    this.rateLimits.set(toolName, executions);
+    
+    // 添加当前时间戳
+    rateLimitData.push(now);
+    this.rateLimiters.set(toolName, rateLimitData);
     
     return true;
-  }
-
-  /**
-   * 创建错误结果
-   */
-  private createErrorResult(
-    toolName: ToolName,
-    errorMessage: string,
-    startTime: number
-  ): ToolExecutionResult {
-    return {
-      success: false,
-      error: errorMessage,
-      output: `Tool execution failed: ${errorMessage}`,
-      metadata: {},
-      artifacts: [],
-      toolName,
-      duration: Date.now() - startTime,
-    };
   }
 
   /**
@@ -322,8 +353,11 @@ export class ToolScheduler {
   private updateSuccessStats(toolName: ToolName, startTime: number): void {
     const stats = this.executionStats.get(toolName);
     if (stats) {
-      stats.successCalls++;
-      stats.totalDuration += Date.now() - startTime;
+      stats.successfulCalls++;
+      stats.lastExecution = Date.now();
+      
+      const duration = Date.now() - startTime;
+      stats.averageDuration = (stats.averageDuration * (stats.totalCalls - 1) + duration) / stats.totalCalls;
     }
   }
 
@@ -334,94 +368,97 @@ export class ToolScheduler {
     const stats = this.executionStats.get(toolName);
     if (stats) {
       stats.failedCalls++;
-      stats.totalDuration += Date.now() - startTime;
+      stats.lastExecution = Date.now();
     }
   }
 
   /**
-   * 获取执行统计信息
+   * 创建错误结果
    */
-  public getExecutionStats(): Record<string, {
-    totalCalls: number;
-    successCalls: number;
-    failedCalls: number;
-    avgDuration: number;
-    errorRate: number;
-  }> {
-    const result: Record<string, any> = {};
+  private createErrorResult(
+    toolName: string,
+    error: string,
+    startTime: number,
+    duration?: number
+  ): ToolExecutionResult {
+    return {
+      output: `Error: ${error}`,
+      success: false,
+      toolName,
+      duration: duration || (Date.now() - startTime),
+      error,
+    };
+  }
+
+  /**
+   * 获取工具统计信息
+   */
+  public getStats(): Record<string, any> {
+    const stats: Record<string, any> = {};
     
-    for (const [toolName, stats] of this.executionStats) {
-      result[toolName] = {
-        totalCalls: stats.totalCalls,
-        successCalls: stats.successCalls,
-        failedCalls: stats.failedCalls,
-        avgDuration: stats.totalCalls > 0 ? Math.round(stats.totalDuration / stats.totalCalls) : 0,
-        errorRate: stats.totalCalls > 0 ? Math.round((stats.failedCalls / stats.totalCalls) * 100) : 0,
+    for (const [toolName, data] of this.executionStats) {
+      stats[toolName] = {
+        ...data,
+        successRate: data.totalCalls > 0 ? (data.successfulCalls / data.totalCalls * 100).toFixed(2) + '%' : '0%',
       };
     }
     
-    return result;
+    return stats;
   }
 
   /**
-   * 获取工具列表（为 LLM 提供）
+   * 获取可用工具列表
    */
-  public getToolsForLLM(): Array<{
-    name: string;
-    displayName: string;
-    description: string;
-    parameterSchema: ToolSchema;
-  }> {
-    const enabledTools: Array<{
-      name: string;
-      displayName: string;
-      description: string;
-      parameterSchema: ToolSchema;
-    }> = [];
-
-    for (const [toolName, tool] of this.tools) {
-      const toolConfig = this.config.tools[toolName];
-      
-      // 只返回启用的工具
-      if (!toolConfig || toolConfig.enabled !== false) {
-        enabledTools.push({
-          name: tool.name,
-          displayName: tool.displayName,
-          description: tool.description,
-          parameterSchema: tool.schema,
-        });
-      }
-    }
-
-    return enabledTools;
+  public getAvailableTools(): Array<{ name: string; description: string; schema: ToolSchema }> {
+    return Array.from(this.tools.entries()).map(([name, tool]) => ({
+      name,
+      description: tool.description,
+      schema: tool.schema,
+    }));
   }
 
   /**
-   * 清理资源
+   * 重置统计信息
    */
-  public cleanup(): void {
-    this.rateLimits.clear();
-    this.executionStats.clear();
+  public resetStats(): void {
+    this.initializeStats();
+    this.rateLimiters.clear();
   }
 }
 
 /**
  * 创建默认工具调度器
+ * 包含所有新工具的预配置实例
  */
-export function createDefaultToolScheduler(projectRoot: string = process.cwd()): ToolScheduler {
+export function createDefaultToolScheduler(
+  projectRoot?: string,
+  options?: {
+    webSearchApiKeys?: ToolSchedulerConfig['webSearchApiKeys'];
+    allowedDomains?: string[];
+  }
+): ToolScheduler {
   const config: ToolSchedulerConfig = {
-    projectRoot,
+    projectRoot: projectRoot || process.cwd(),
     tools: {
-      // 所有工具默认启用
-      write_file: { enabled: true, rateLimitPerMinute: 20 },
-      list_directory: { enabled: true, rateLimitPerMinute: 30 },
-      search_file_content: { enabled: true, rateLimitPerMinute: 15 },
-      find_files: { enabled: true, rateLimitPerMinute: 20 },
-      execute_shell_command: { enabled: true, rateLimitPerMinute: 10 }, // Shell命令限制更严格
-      read_file: { enabled: true, rateLimitPerMinute: 50 },
+      // 基础工具 - 默认启用
+      read_file: { enabled: true, timeout: 30000, rateLimitPerMinute: 100 },
+      write_file: { enabled: true, timeout: 30000, rateLimitPerMinute: 50 },
+      list_directory: { enabled: true, timeout: 10000, rateLimitPerMinute: 100 },
+      search_file_content: { enabled: true, timeout: 60000, rateLimitPerMinute: 50 },
+      find_files: { enabled: true, timeout: 30000, rateLimitPerMinute: 100 },
+      execute_shell_command: { enabled: true, timeout: 120000, rateLimitPerMinute: 20 },
+      
+      // 新工具 - 默认启用
+      web_fetch: { enabled: true, timeout: 30000, rateLimitPerMinute: 30 },
+      web_search: { enabled: true, timeout: 30000, rateLimitPerMinute: 10 },
+      memory: { enabled: true, timeout: 10000, rateLimitPerMinute: 50 },
+      read_many_files: { enabled: true, timeout: 60000, rateLimitPerMinute: 20 },
+      file_edit: { enabled: true, timeout: 30000, rateLimitPerMinute: 30 },
     },
-    globalTimeout: 60000, // 60秒全局超时
-    maxConcurrentTools: 3, // 最多同时执行3个工具
+    globalTimeout: 120000, // 2分钟全局超时
+    maxConcurrentTools: 5,
+    webSearchApiKeys: options?.webSearchApiKeys,
+    allowedDomains: options?.allowedDomains,
   };
 
   return new ToolScheduler(config);

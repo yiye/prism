@@ -8,6 +8,19 @@ import {
   Tool,
   ToolRegistry as IToolRegistry,
 } from '../../../../types';
+import { createFileEditTool } from './file-edit';
+// 导入现有工具的创建函数
+import { createFileReaderTool } from './file-reader';
+import { createGlobSearchTool } from './glob-search';
+import { createGrepSearchTool } from './grep-search';
+import { createListDirectoryTool } from './list-directory';
+import { createMemoryTool } from './memory-tool';
+import { createReadManyFilesTool } from './read-many-files';
+import { createShellCommandTool } from './shell-command';
+// 导入新工具的创建函数
+import { createWebFetchTool } from './web-fetch';
+import { createWebSearchTool } from './web-search';
+import { createWriteFileTool } from './write-file';
 
 /**
  * 工具注册表实现
@@ -102,30 +115,7 @@ export class ToolRegistry implements IToolRegistry {
   }
 
   /**
-   * 清空所有工具
-   */
-  clear(): void {
-    this.tools.clear();
-    this.toolCategories.clear();
-    this.toolDependencies.clear();
-  }
-
-  /**
-   * 按分类获取工具
-   */
-  getToolsByCategory(category: string): Tool[] {
-    const toolNames = this.toolCategories.get(category);
-    if (!toolNames) {
-      return [];
-    }
-
-    return Array.from(toolNames)
-      .map(name => this.tools.get(name))
-      .filter((tool): tool is Tool => tool !== undefined);
-  }
-
-  /**
-   * 为工具设置分类
+   * 设置工具分类
    */
   setToolCategory(toolName: string, category: string): void {
     if (!this.tools.has(toolName)) {
@@ -140,22 +130,25 @@ export class ToolRegistry implements IToolRegistry {
   }
 
   /**
-   * 获取所有分类
+   * 获取分类中的工具
    */
-  getCategories(): string[] {
-    return Array.from(this.toolCategories.keys());
+  getToolsByCategory(category: string): Tool[] {
+    const toolNames = this.toolCategories.get(category);
+    if (!toolNames) {
+      return [];
+    }
+
+    return Array.from(toolNames)
+      .map(name => this.tools.get(name))
+      .filter((tool): tool is Tool => tool !== undefined);
   }
 
   /**
    * 设置工具依赖关系
    */
   setToolDependency(toolName: string, dependsOn: string): void {
-    if (!this.tools.has(toolName)) {
-      throw new Error(`Tool '${toolName}' not found`);
-    }
-    
-    if (!this.tools.has(dependsOn)) {
-      throw new Error(`Dependency tool '${dependsOn}' not found`);
+    if (!this.tools.has(toolName) || !this.tools.has(dependsOn)) {
+      throw new Error('Both tools must be registered before setting dependency');
     }
 
     if (!this.toolDependencies.has(toolName)) {
@@ -166,7 +159,7 @@ export class ToolRegistry implements IToolRegistry {
   }
 
   /**
-   * 获取工具的依赖
+   * 获取工具依赖
    */
   getToolDependencies(toolName: string): string[] {
     const dependencies = this.toolDependencies.get(toolName);
@@ -174,57 +167,10 @@ export class ToolRegistry implements IToolRegistry {
   }
 
   /**
-   * 检查工具依赖是否满足
+   * 获取所有分类
    */
-  checkDependencies(toolName: string): { satisfied: boolean; missing: string[] } {
-    const dependencies = this.getToolDependencies(toolName);
-    const missing = dependencies.filter(dep => !this.tools.has(dep));
-    
-    return {
-      satisfied: missing.length === 0,
-      missing,
-    };
-  }
-
-  /**
-   * 获取可用的工具（满足依赖条件）
-   */
-  getAvailableTools(): Tool[] {
-    return this.list().filter(tool => {
-      const depCheck = this.checkDependencies(tool.name);
-      return depCheck.satisfied;
-    });
-  }
-
-  /**
-   * 按能力过滤工具
-   */
-  getToolsByCapability(capability: 'readonly' | 'modifying' | 'streaming'): Tool[] {
-    return this.list().filter(tool => {
-      switch (capability) {
-        case 'readonly':
-          return !tool.canUpdateOutput; // 只读工具通常不支持流式输出
-        case 'modifying':
-          return tool.canUpdateOutput; // 修改性工具通常支持流式输出
-        case 'streaming':
-          return tool.canUpdateOutput;
-        default:
-          return false;
-      }
-    });
-  }
-
-  /**
-   * 搜索工具
-   */
-  searchTools(query: string): Tool[] {
-    const lowercaseQuery = query.toLowerCase();
-    
-    return this.list().filter(tool => 
-      tool.name.toLowerCase().includes(lowercaseQuery) ||
-      tool.displayName.toLowerCase().includes(lowercaseQuery) ||
-      tool.description.toLowerCase().includes(lowercaseQuery)
-    );
+  getCategories(): string[] {
+    return Array.from(this.toolCategories.keys());
   }
 
   /**
@@ -232,172 +178,102 @@ export class ToolRegistry implements IToolRegistry {
    */
   getStats(): {
     totalTools: number;
-    categoryCounts: Record<string, number>;
-    capabilityCounts: {
-      readonly: number;
-      modifying: number;
-      streaming: number;
-      markdown: number;
-    };
+    categories: number;
+    toolsPerCategory: Record<string, number>;
   } {
-    const tools = this.list();
+    const toolsPerCategory: Record<string, number> = {};
     
+    for (const [category, tools] of this.toolCategories) {
+      toolsPerCategory[category] = tools.size;
+    }
+
     return {
-      totalTools: tools.length,
-      categoryCounts: Object.fromEntries(
-        Array.from(this.toolCategories.entries()).map(([cat, tools]) => [cat, tools.size])
-      ),
-      capabilityCounts: {
-        readonly: tools.filter(t => !t.canUpdateOutput).length,
-        modifying: tools.filter(t => t.canUpdateOutput).length,
-        streaming: tools.filter(t => t.canUpdateOutput).length,
-        markdown: tools.filter(t => t.isOutputMarkdown).length,
-      },
+      totalTools: this.tools.size,
+      categories: this.toolCategories.size,
+      toolsPerCategory,
     };
   }
 
   /**
-   * 验证工具的有效性
+   * 清空所有工具
+   */
+  clear(): void {
+    this.tools.clear();
+    this.toolCategories.clear();
+    this.toolDependencies.clear();
+  }
+
+  /**
+   * 验证工具的基本要求
    */
   private validateTool(tool: Tool): void {
-    // 检查必需字段
     if (!tool.name || typeof tool.name !== 'string') {
-      throw new Error('Tool name is required and must be a string');
+      throw new Error('Tool must have a valid name');
     }
 
     if (!tool.displayName || typeof tool.displayName !== 'string') {
-      throw new Error('Tool displayName is required and must be a string');
+      throw new Error('Tool must have a valid display name');
     }
 
     if (!tool.description || typeof tool.description !== 'string') {
-      throw new Error('Tool description is required and must be a string');
+      throw new Error('Tool must have a valid description');
     }
 
     if (!tool.schema || typeof tool.schema !== 'object') {
-      throw new Error('Tool schema is required and must be an object');
-    }
-
-    // 检查方法
-    if (typeof tool.validateParams !== 'function') {
-      throw new Error('Tool must have a validateParams method');
-    }
-
-    if (typeof tool.shouldConfirm !== 'function') {
-      throw new Error('Tool must have a shouldConfirm method');
+      throw new Error('Tool must have a valid schema');
     }
 
     if (typeof tool.execute !== 'function') {
       throw new Error('Tool must have an execute method');
     }
 
-    // 检查 schema 格式
-    this.validateSchema(tool.schema);
-  }
-
-  /**
-   * 验证工具 schema
-   */
-  private validateSchema(schema: Tool['schema']): void {
-    if (schema.type !== 'object') {
-      throw new Error('Tool schema type must be "object"');
-    }
-
-    if (!schema.properties || typeof schema.properties !== 'object') {
-      throw new Error('Tool schema must have properties');
-    }
-
-    if (!Array.isArray(schema.required)) {
-      throw new Error('Tool schema required must be an array');
-    }
-
-    // 检查必需字段是否都在 properties 中定义
-    for (const required of schema.required) {
-      if (!(required in schema.properties)) {
-        throw new Error(`Required field '${required}' not found in properties`);
-      }
+    if (typeof tool.validateParams !== 'function') {
+      throw new Error('Tool must have a validateParams method');
     }
   }
 
   /**
-   * 导出工具定义（用于 Claude API）
+   * 导出工具配置（用于序列化）
    */
-  exportForClaude(): Array<{
-    name: string;
-    description: string;
-    input_schema: Tool['schema'];
-  }> {
-    return this.getAvailableTools().map(tool => ({
-      name: tool.name,
-      description: tool.description,
-      input_schema: tool.schema,
-    }));
-  }
-
-  /**
-   * 从配置文件加载工具
-   */
-  async loadFromConfig(config: {
-    tools: Array<{
-      name: string;
-      enabled: boolean;
-      category?: string;
-      dependencies?: string[];
-      options?: Record<string, unknown>;
-    }>;
-  }): Promise<void> {
-    // 这里可以根据配置动态加载工具
-    // 实际实现中可能需要工具工厂或动态导入
-    console.log('Loading tools from config:', config);
-  }
-
-  /**
-   * 保存工具配置
-   */
-  saveConfig(): {
+  exportConfig(): {
     tools: Array<{
       name: string;
       displayName: string;
       description: string;
-      category: string;
+      category?: string;
       dependencies: string[];
-      capabilities: {
-        readonly: boolean;
-        streaming: boolean;
-        markdown: boolean;
-      };
     }>;
+    categories: string[];
   } {
+    const tools = this.list().map(tool => ({
+      name: tool.name,
+      displayName: tool.displayName,
+      description: tool.description,
+      category: this.findToolCategory(tool.name),
+      dependencies: this.getToolDependencies(tool.name),
+    }));
+
     return {
-      tools: this.list().map(tool => ({
-        name: tool.name,
-        displayName: tool.displayName,
-        description: tool.description,
-        category: this.getToolCategory(tool.name),
-        dependencies: this.getToolDependencies(tool.name),
-        capabilities: {
-          readonly: !tool.canUpdateOutput,
-          streaming: tool.canUpdateOutput,
-          markdown: tool.isOutputMarkdown,
-        },
-      })),
+      tools,
+      categories: this.getCategories(),
     };
   }
 
   /**
-   * 获取工具的分类
+   * 查找工具所属分类
    */
-  private getToolCategory(toolName: string): string {
+  private findToolCategory(toolName: string): string | undefined {
     for (const [category, tools] of this.toolCategories) {
       if (tools.has(toolName)) {
         return category;
       }
     }
-    return 'uncategorized';
+    return undefined;
   }
 }
 
 /**
- * 创建默认的工具注册表
+ * 创建工具注册表
  */
 export function createToolRegistry(): ToolRegistry {
   return new ToolRegistry();
@@ -405,7 +281,6 @@ export function createToolRegistry(): ToolRegistry {
 
 /**
  * 全局工具注册表实例
- * 参考 qwen-code 的单例模式
  */
 let globalRegistry: ToolRegistry | null = null;
 
@@ -424,4 +299,91 @@ export function getGlobalToolRegistry(): ToolRegistry {
  */
 export function resetGlobalToolRegistry(): void {
   globalRegistry = null;
+}
+
+/**
+ * 创建增强的代码审查工具注册表
+ * 包含所有新工具的完整版本
+ */
+export function createEnhancedCodeReviewToolRegistry(
+  projectRoot?: string,
+  options?: {
+    webSearchApiKeys?: {
+      googleApiKey?: string;
+      googleCseId?: string;
+      bingApiKey?: string;
+    };
+    allowedDomains?: string[];
+  }
+): ToolRegistry {
+  const registry = createToolRegistry();
+  
+  try {
+    // 注册基础文件操作工具
+    const fileReader = createFileReaderTool(projectRoot);
+    const fileWriter = createWriteFileTool(projectRoot);
+    const dirLister = createListDirectoryTool(projectRoot);
+    
+    registry.register(fileReader as unknown as Tool);
+    registry.register(fileWriter as unknown as Tool);
+    registry.register(dirLister as unknown as Tool);
+    
+    registry.setToolCategory(fileReader.name, 'file_operations');
+    registry.setToolCategory(fileWriter.name, 'file_operations');
+    registry.setToolCategory(dirLister.name, 'file_operations');
+
+    // 注册搜索工具
+    const grepSearch = createGrepSearchTool(projectRoot);
+    const globSearch = createGlobSearchTool(projectRoot);
+    
+    registry.register(grepSearch as unknown as Tool);
+    registry.register(globSearch as unknown as Tool);
+    
+    registry.setToolCategory(grepSearch.name, 'search_tools');
+    registry.setToolCategory(globSearch.name, 'search_tools');
+
+    // 注册系统工具
+    const shellCommand = createShellCommandTool(projectRoot);
+    registry.register(shellCommand as unknown as Tool);
+    registry.setToolCategory(shellCommand.name, 'system_tools');
+
+    // 注册新工具 - Web 功能
+    const webFetch = createWebFetchTool(options?.allowedDomains);
+    const webSearch = createWebSearchTool(options?.webSearchApiKeys);
+    
+    registry.register(webFetch as unknown as Tool);
+    registry.register(webSearch as unknown as Tool);
+    
+    registry.setToolCategory(webFetch.name, 'web_tools');
+    registry.setToolCategory(webSearch.name, 'web_tools');
+
+    // 注册新工具 - 内存和数据处理
+    const memory = createMemoryTool(projectRoot);
+    const readManyFiles = createReadManyFilesTool(projectRoot);
+    
+    registry.register(memory as unknown as Tool);
+    registry.register(readManyFiles as unknown as Tool);
+    
+    registry.setToolCategory(memory.name, 'data_tools');
+    registry.setToolCategory(readManyFiles.name, 'file_operations');
+
+    // 注册新工具 - 文件编辑
+    const fileEdit = createFileEditTool(projectRoot);
+    
+    registry.register(fileEdit as unknown as Tool);
+    registry.setToolCategory(fileEdit.name, 'file_operations');
+
+    // 设置工具依赖关系
+    registry.setToolDependency(fileEdit.name, fileReader.name); // 编辑需要先读取
+    registry.setToolDependency(readManyFiles.name, fileReader.name); // 批量读取基于单文件读取
+
+    console.log(`🛠️ Enhanced tool registry created with ${registry.list().length} tools`);
+    console.log(`📊 Categories: ${registry.getCategories().join(', ')}`);
+
+    return registry;
+
+  } catch (error) {
+    console.error('Failed to create enhanced tool registry:', error);
+    throw new Error(`Tool registry initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
 } 
