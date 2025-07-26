@@ -1,70 +1,43 @@
 /**
- * Agent 统一配置服务
- * 🌟 支持配置文件 + 环境变量的灵活配置方式
+ * Agent 简化配置服务
+ * 🌟 只支持 apiKey 和 baseUrl 配置，其他使用固定默认值
  */
 
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 // 配置文件路径
 export const PRISM_CONFIG_DIR = path.join(os.homedir(), '.prism');
 export const PRISM_CONFIG_FILE = path.join(PRISM_CONFIG_DIR, 'config.json');
 
+// 简化的 Claude 配置，只保留 apiKey 和 baseUrl
 export interface ClaudeConfig {
   apiKey: string;
   baseUrl?: string;
-  model?: string;
-  maxTokens?: number;
-  temperature?: number;
 }
 
-export interface AgentGlobalConfig {
-  claude: ClaudeConfig;
-  session: {
-    timeout?: number; // 会话超时时间（毫秒）
-    maxSessions?: number; // 最大会话数
-    cleanupInterval?: number; // 清理间隔（毫秒）
-  };
-  tools: {
-    enabled?: string[]; // 启用的工具列表
-    projectRoot?: string; // 默认项目根目录
-  };
-  logging: {
-    level?: 'debug' | 'info' | 'warn' | 'error';
-    enableConsole?: boolean;
-  };
-}
+// 固定的默认配置
+export const FIXED_AGENT_CONFIG = {
+  model: 'claude-3-5-sonnet-20241022',
+  maxTokens: 4096,
+  temperature: 0.7,
+  sessionTimeout: 30 * 60 * 1000, // 30分钟
+  maxSessions: 50,
+  cleanupInterval: 5 * 60 * 1000, // 5分钟
+};
 
 // 默认配置
-const DEFAULT_CONFIG: AgentGlobalConfig = {
-  claude: {
-    apiKey: '',
-    baseUrl: 'https://api.anthropic.com',
-    model: 'claude-3-5-sonnet-20241022',
-    maxTokens: 4096,
-    temperature: 0.7,
-  },
-  session: {
-    timeout: 30 * 60 * 1000, // 30分钟
-    maxSessions: 50,
-    cleanupInterval: 5 * 60 * 1000, // 5分钟
-  },
-  tools: {
-    enabled: ['file_reader', 'code_analyzer'],
-    projectRoot: process.cwd(),
-  },
-  logging: {
-    level: 'info',
-    enableConsole: true,
-  },
+const DEFAULT_CONFIG: ClaudeConfig = {
+  apiKey: '',
+  baseUrl: 'https://api.anthropic.com',
 };
 
 /**
- * Agent 配置管理器
+ * 简化的 Agent 配置管理器
  */
 export class AgentConfigManager {
-  private config: AgentGlobalConfig;
+  private config: ClaudeConfig;
   private configPath: string;
 
   constructor(configPath?: string) {
@@ -76,15 +49,16 @@ export class AgentConfigManager {
    * 加载配置
    * 优先级：环境变量 > 配置文件 > 默认配置
    */
-  private loadConfig(): AgentGlobalConfig {
+  private loadConfig(): ClaudeConfig {
     // 1. 从默认配置开始
-    let config = JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as AgentGlobalConfig;
+    const config = { ...DEFAULT_CONFIG };
 
     // 2. 尝试加载配置文件
     if (fs.existsSync(this.configPath)) {
       try {
         const fileConfig = JSON.parse(fs.readFileSync(this.configPath, 'utf8'));
-        config = this.mergeConfigs(config, fileConfig);
+        if (fileConfig.apiKey) config.apiKey = fileConfig.apiKey;
+        if (fileConfig.baseUrl) config.baseUrl = fileConfig.baseUrl;
         console.log(`📄 Loaded config from: ${this.configPath}`);
       } catch (error) {
         console.warn(`⚠️ Failed to load config file: ${error}`);
@@ -92,7 +66,12 @@ export class AgentConfigManager {
     }
 
     // 3. 环境变量覆盖
-    config = this.applyEnvironmentVariables(config);
+    if (process.env.ANTHROPIC_API_KEY) {
+      config.apiKey = process.env.ANTHROPIC_API_KEY;
+    }
+    if (process.env.CLAUDE_BASE_URL) {
+      config.baseUrl = process.env.CLAUDE_BASE_URL;
+    }
 
     // 4. 验证配置
     this.validateConfig(config);
@@ -101,103 +80,21 @@ export class AgentConfigManager {
   }
 
   /**
-   * 应用环境变量
-   */
-  private applyEnvironmentVariables(config: AgentGlobalConfig): AgentGlobalConfig {
-    const env = process.env;
-
-    // Claude 配置
-    if (env.ANTHROPIC_API_KEY) {
-      config.claude.apiKey = env.ANTHROPIC_API_KEY;
-    }
-    if (env.CLAUDE_BASE_URL) {
-      config.claude.baseUrl = env.CLAUDE_BASE_URL;
-    }
-    if (env.CLAUDE_MODEL) {
-      config.claude.model = env.CLAUDE_MODEL;
-    }
-    if (env.CLAUDE_MAX_TOKENS) {
-      const maxTokens = parseInt(env.CLAUDE_MAX_TOKENS, 10);
-      if (!isNaN(maxTokens)) {
-        config.claude.maxTokens = maxTokens;
-      }
-    }
-    if (env.CLAUDE_TEMPERATURE) {
-      const temperature = parseFloat(env.CLAUDE_TEMPERATURE);
-      if (!isNaN(temperature)) {
-        config.claude.temperature = temperature;
-      }
-    }
-
-    // 会话配置
-    if (env.AGENT_SESSION_TIMEOUT) {
-      const timeout = parseInt(env.AGENT_SESSION_TIMEOUT, 10);
-      if (!isNaN(timeout)) {
-        config.session.timeout = timeout;
-      }
-    }
-    if (env.AGENT_MAX_SESSIONS) {
-      const maxSessions = parseInt(env.AGENT_MAX_SESSIONS, 10);
-      if (!isNaN(maxSessions)) {
-        config.session.maxSessions = maxSessions;
-      }
-    }
-
-    // 工具配置
-    if (env.AGENT_PROJECT_ROOT) {
-      config.tools.projectRoot = env.AGENT_PROJECT_ROOT;
-    }
-
-    // 日志配置
-    if (env.AGENT_LOG_LEVEL) {
-      const level = env.AGENT_LOG_LEVEL.toLowerCase();
-      if (['debug', 'info', 'warn', 'error'].includes(level)) {
-        config.logging.level = level as 'debug' | 'info' | 'warn' | 'error';
-      }
-    }
-
-    return config;
-  }
-
-  /**
-   * 合并配置对象
-   */
-  private mergeConfigs(base: AgentGlobalConfig, override: Partial<AgentGlobalConfig>): AgentGlobalConfig {
-    return {
-      claude: { ...base.claude, ...override.claude },
-      session: { ...base.session, ...override.session },
-      tools: { ...base.tools, ...override.tools },
-      logging: { ...base.logging, ...override.logging },
-    };
-  }
-
-  /**
    * 验证配置
    */
-  private validateConfig(config: AgentGlobalConfig): void {
+  private validateConfig(config: ClaudeConfig): void {
     const errors: string[] = [];
 
-    // 验证 Claude 配置
-    if (!config.claude.apiKey) {
+    if (!config.apiKey) {
       errors.push('Claude API key is required (set ANTHROPIC_API_KEY or configure in config file)');
     }
 
-    if (config.claude.temperature !== undefined && 
-        (config.claude.temperature < 0 || config.claude.temperature > 1)) {
-      errors.push('Claude temperature must be between 0 and 1');
-    }
-
-    if (config.claude.maxTokens !== undefined && config.claude.maxTokens < 1) {
-      errors.push('Claude maxTokens must be greater than 0');
-    }
-
-    // 验证会话配置
-    if (config.session.timeout !== undefined && config.session.timeout < 1000) {
-      errors.push('Session timeout must be at least 1000ms');
-    }
-
-    if (config.session.maxSessions !== undefined && config.session.maxSessions < 1) {
-      errors.push('Max sessions must be greater than 0');
+    if (config.baseUrl) {
+      try {
+        new URL(config.baseUrl);
+      } catch {
+        errors.push('Invalid base URL format');
+      }
     }
 
     if (errors.length > 0) {
@@ -209,48 +106,32 @@ export class AgentConfigManager {
    * 获取 Claude 配置
    */
   getClaudeConfig(): ClaudeConfig {
-    return { ...this.config.claude };
+    return { ...this.config };
   }
 
   /**
-   * 获取会话配置
+   * 获取完整配置（包含固定配置）
    */
-  getSessionConfig() {
-    return { ...this.config.session };
-  }
-
-  /**
-   * 获取工具配置
-   */
-  getToolsConfig() {
-    return { ...this.config.tools };
-  }
-
-  /**
-   * 获取日志配置
-   */
-  getLoggingConfig() {
-    return { ...this.config.logging };
-  }
-
-  /**
-   * 获取完整配置
-   */
-  getAllConfig(): AgentGlobalConfig {
-    return JSON.parse(JSON.stringify(this.config));
+  getAllConfig() {
+    return {
+      ...this.config,
+      ...FIXED_AGENT_CONFIG,
+    };
   }
 
   /**
    * 保存配置到文件
    */
-  saveConfig(config: Partial<AgentGlobalConfig>): void {
+  saveConfig(config: Partial<ClaudeConfig>): void {
     // 确保配置目录存在
     if (!fs.existsSync(PRISM_CONFIG_DIR)) {
       fs.mkdirSync(PRISM_CONFIG_DIR, { recursive: true });
     }
 
     // 合并配置
-    const newConfig = this.mergeConfigs(this.config, config);
+    const newConfig = { ...this.config };
+    if (config.apiKey !== undefined) newConfig.apiKey = config.apiKey;
+    if (config.baseUrl !== undefined) newConfig.baseUrl = config.baseUrl;
     
     // 验证新配置
     this.validateConfig(newConfig);
@@ -287,7 +168,7 @@ export class AgentConfigManager {
     let overallStatus: 'healthy' | 'warning' | 'error' = 'healthy';
 
     // 检查 API Key
-    if (this.config.claude.apiKey) {
+    if (this.config.apiKey) {
       checks.push({
         name: 'Claude API Key',
         status: 'ok' as const,
@@ -320,11 +201,11 @@ export class AgentConfigManager {
 
     // 检查网络配置
     try {
-      new URL(this.config.claude.baseUrl || '');
+      new URL(this.config.baseUrl || '');
       checks.push({
         name: 'Base URL',
         status: 'ok' as const,
-        message: `Valid URL: ${this.config.claude.baseUrl}`
+        message: `Valid URL: ${this.config.baseUrl}`
       });
     } catch {
       checks.push({

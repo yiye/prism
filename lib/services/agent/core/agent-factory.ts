@@ -7,7 +7,7 @@ import {
   AgentOptions,
   AgentStats,
 } from '../../../../types';
-import { getClaudeConfig } from '../../../config/agent-config';
+import { getClaudeConfig, FIXED_AGENT_CONFIG } from '../../../config/agent-config';
 import { ToolRegistry } from '../tools/tool-registry';
 import { ToolScheduler } from '../tools/tool-scheduler';
 import { CodeReviewAgent } from './agent';
@@ -15,14 +15,11 @@ import { AgentLoopExecutor } from './agent-loop';
 import { ClaudeClient } from './claude-client';
 
 /**
- * 默认 Agent 配置
+ * 默认系统提示
  */
-export const DEFAULT_AGENT_OPTIONS: Partial<AgentOptions> = {
-  model: 'claude-3-5-sonnet-20241022',
-  maxTokens: 4096,
-  temperature: 0.7,
-  maxTurns: 20,
-};
+export const DEFAULT_SYSTEM_PROMPT = `你是一个专业的代码审查助手。你可以帮助分析代码、提供改进建议、解释代码逻辑、查找潜在问题等。
+
+请以友好和专业的方式回应用户的请求。当需要使用工具时，请合理选择并正确使用它们。`;
 
 /**
  * 创建代码审查 Agent 实例
@@ -37,27 +34,27 @@ export function createCodeReviewAgent(
 
 /**
  * 创建 Agent 配置
- * 合并用户选项和默认配置
+ * 使用简化的配置方式
  */
 export function createAgentConfig(options: AgentOptions) {
-  // 获取统一配置
-  const globalClaudeConfig = getClaudeConfig();
+  // 获取简化的配置
+  const claudeConfig = getClaudeConfig();
   
-  // 构建最终的 Claude 配置（优先级：options > configOverrides > globalConfig > defaults）
-  const claudeConfig = {
-    apiKey: options.apiKey || globalClaudeConfig.apiKey,
-    model: options.model || options.configOverrides?.model || globalClaudeConfig.model || DEFAULT_AGENT_OPTIONS.model,
-    maxTokens: options.maxTokens || options.configOverrides?.maxTokens || globalClaudeConfig.maxTokens || DEFAULT_AGENT_OPTIONS.maxTokens,
-    temperature: options.temperature ?? options.configOverrides?.temperature ?? globalClaudeConfig.temperature ?? DEFAULT_AGENT_OPTIONS.temperature,
-    baseURL: options.configOverrides?.baseUrl || globalClaudeConfig.baseUrl || 'https://api.anthropic.com',
+  // 构建最终的 Claude 配置（优先级：options > globalConfig > defaults）
+  const finalConfig = {
+    apiKey: options.apiKey || claudeConfig.apiKey,
+    baseURL: options.configOverrides?.baseUrl || claudeConfig.baseUrl || 'https://api.anthropic.com',
+    model: FIXED_AGENT_CONFIG.model,
+    maxTokens: FIXED_AGENT_CONFIG.maxTokens,
+    temperature: FIXED_AGENT_CONFIG.temperature,
   };
 
   // 验证必要配置
-  if (!claudeConfig.apiKey) {
-    throw new Error('Claude API key is required. Please set ANTHROPIC_API_KEY environment variable or configure it in ~/.code-agent/config.json');
+  if (!finalConfig.apiKey) {
+    throw new Error('Claude API key is required. Please set ANTHROPIC_API_KEY environment variable or configure it in ~/.prism/config.json');
   }
 
-  return claudeConfig;
+  return finalConfig;
 }
 
 /**

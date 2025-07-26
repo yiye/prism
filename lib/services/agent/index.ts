@@ -9,7 +9,7 @@ import type {
   StreamEvent,
 } from '@/types';
 
-import { getGlobalConfigManager } from '../../config/agent-config';
+import { getGlobalConfigManager, FIXED_AGENT_CONFIG } from '../../config/agent-config';
 import {
   CodeReviewAgent,
   createCodeReviewAgent,
@@ -22,7 +22,7 @@ import { createDefaultToolScheduler } from './tools/tool-scheduler';
 // === 会话管理相关类型 ===
 export interface SessionConfig {
   apiKey?: string;
-  model?: string;
+  baseUrl?: string;
   projectPath?: string;
   userMemory?: string;
   customInstructions?: string;
@@ -79,10 +79,10 @@ export class AgentService {
   private cleanupInterval: NodeJS.Timeout;
 
   constructor() {
-    // 每30分钟清理过期会话
+    // 使用固定配置的清理间隔
     this.cleanupInterval = setInterval(() => {
       this.cleanupExpiredSessions();
-    }, 30 * 60 * 1000);
+    }, FIXED_AGENT_CONFIG.cleanupInterval);
   }
 
   /**
@@ -165,7 +165,7 @@ export class AgentService {
           content: finalContent || 'Response completed',
           toolCalls,
           metadata: {
-            model: 'claude-3-5-sonnet-20241022',
+            model: FIXED_AGENT_CONFIG.model,
             tokensUsed
           }
         }
@@ -315,9 +315,9 @@ export class AgentService {
       // 创建 Agent 实例
       const agentOptions: AgentOptions = {
         apiKey: config.apiKey,
-        model: config.model || globalConfig.claude.model,
-        maxTokens: globalConfig.claude.maxTokens,
-        temperature: globalConfig.claude.temperature,
+        configOverrides: {
+          baseUrl: config.baseUrl,
+        },
         systemPrompt,
         projectRoot: projectPath,
         maxTurns: 50,
@@ -380,14 +380,14 @@ export class AgentService {
   }
 
   /**
-   * 清理过期会话（超过30分钟无活动）
+   * 清理过期会话（使用固定的超时时间）
    */
   private cleanupExpiredSessions(): void {
     const now = Date.now();
-    const thirtyMinutes = 30 * 60 * 1000;
+    const sessionTimeout = FIXED_AGENT_CONFIG.sessionTimeout;
     
     for (const [sessionId, session] of this.sessions) {
-      if (now - session.lastActivity > thirtyMinutes) {
+      if (now - session.lastActivity > sessionTimeout) {
         console.log(`🧹 Cleaning up expired session: ${sessionId}`);
         this.deleteSession(sessionId);
       }
