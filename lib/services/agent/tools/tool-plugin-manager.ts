@@ -8,7 +8,8 @@ import {
   Tool,
   ToolRegistry as IToolRegistry,
   ValidationResult,
-} from '../../../../types';
+} from '@/types';
+
 import {
   getGlobalToolFactoryRegistry,
   ToolConfig,

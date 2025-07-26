@@ -11,7 +11,7 @@ import {
   ClaudeStreamEvent,
   Tool,
   ToolResult,
-} from '../../../../types';
+} from '@/types';
 
 export interface ClaudeConfig {
   apiKey: string;

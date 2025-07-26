@@ -3,7 +3,7 @@
  * 🎯 消除重复代码，提高代码复用性
  */
 
-import { AgentError } from '../../../../types';
+import { AgentError } from '@/types';
 
 /**
  * ID 生成器 - 统一 ID 生成逻辑

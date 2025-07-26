@@ -6,7 +6,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { ValidationResult } from '../../../../types';
+import { ValidationResult } from '@/types';
+
 import {
   BaseTool,
   type ToolParams,

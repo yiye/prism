@@ -12,7 +12,8 @@ import {
   ToolResult,
   ToolSchema,
   ValidationResult,
-} from '../../../../types';
+} from '@/types';
+
 import { ModifyingTool } from './base-tool';
 
 interface MemoryParams {

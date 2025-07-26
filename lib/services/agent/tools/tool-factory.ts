@@ -8,7 +8,7 @@ import {
   Tool,
   ToolSchema,
   ValidationResult,
-} from '../../../../types';
+} from '@/types';
 
 export interface ToolMetadata {
   name: string;

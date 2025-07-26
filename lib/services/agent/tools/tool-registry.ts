@@ -7,7 +7,8 @@
 import {
   Tool,
   ToolRegistry as IToolRegistry,
-} from '../../../../types';
+} from '@/types';
+
 import { createFileEditTool } from './file-edit';
 // 导入现有工具的创建函数
 import { createFileReaderTool } from './file-reader';

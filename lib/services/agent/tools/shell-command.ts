@@ -7,7 +7,8 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
-import type { ValidationResult } from '../../../../types';
+import type { ValidationResult } from '@/types';
+
 import {
   BaseTool,
   type ToolParams,

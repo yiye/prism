@@ -3,7 +3,7 @@
  * 🎯 提高类型安全性，减少类型转换
  */
 
-import { StreamEvent } from '../../../../types';
+import { StreamEvent } from '@/types';
 
 /**
  * 强类型的 SSE 事件

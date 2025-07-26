@@ -12,7 +12,8 @@ import {
   Message,
   StreamEvent,
   ToolCall,
-} from '../../../../types';
+} from '@/types';
+
 import { ToolRegistry } from '../tools/tool-registry';
 import {
   type ExecutionOptions,

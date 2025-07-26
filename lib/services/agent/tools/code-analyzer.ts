@@ -14,7 +14,8 @@ import {
   ToolResult,
   ToolSchema,
   ValidationResult,
-} from '../../../../types';
+} from '@/types';
+
 import { ReadOnlyTool } from './base-tool';
 
 interface CodeAnalyzerParams {

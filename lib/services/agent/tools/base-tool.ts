@@ -11,13 +11,13 @@ import {
   ToolResult,
   ToolSchema,
   ValidationResult,
-} from '../../../../types';
+} from '@/types';
 
 // 导出工具参数类型（解决 tool-manager.ts 导入问题）
 export type ToolParams = Record<string, unknown>;
 
 // 确保 ToolResult 被正确导出
-export type { ToolResult } from '../../../../types';
+export type { ToolResult } from '@/types';
 
 /**
  * 抽象基础工具类

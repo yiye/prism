@@ -4,7 +4,8 @@
  * 负责工具执行的策略控制、监控和调度
  */
 
-import { type ToolSchema } from '../../../../types';
+import { type ToolSchema } from '@/types';
+
 import {
   type ToolParams,
   type ToolResult,
