@@ -158,6 +158,50 @@ export interface AgentState {
   lastActivity: number;
 }
 
+// Agent Configuration and Options
+export interface ClaudeConfig {
+  apiKey: string;
+  baseUrl?: string;
+  model?: string;
+  maxTokens?: number;
+  temperature?: number;
+}
+
+export interface AgentOptions {
+  apiKey?: string; // 可选，如果不提供则从配置服务读取
+  model?: string;
+  maxTokens?: number;
+  temperature?: number;
+  maxTurns?: number;
+  systemPrompt?: string;
+  projectRoot?: string;
+  configOverrides?: Partial<ClaudeConfig>; // 允许覆盖配置
+}
+
+export interface AgentResponse {
+  message: Message;
+  context: AgentContext;
+  completed: boolean;
+}
+
+export interface AgentStats {
+  totalTools: number;
+  enabledTools: number;
+  lastExecution: number;
+}
+
+// Tool Execution Types
+export interface ToolExecutionOptions {
+  signal?: AbortSignal;
+  timeout?: number;
+}
+
+export interface StreamEventResult {
+  content: string;
+  toolCalls: ToolCall[];
+  events?: StreamEvent[];
+}
+
 export interface ToolRegistry {
   tools: Map<string, Tool>;
   register(tool: Tool): void;
