@@ -14,19 +14,45 @@ import {
   Message,
   StreamEvent,
 } from '../../../../types';
+import {
+  FIXED_AGENT_CONFIG,
+  getClaudeConfig,
+} from '../../../config/agent-config';
 import { ToolRegistry } from '../tools/tool-registry';
 import { ToolScheduler } from '../tools/tool-scheduler';
-import {
-  createAgentConfig,
-  createAgentLoopExecutor,
-  createClaudeClient,
-  createDefaultToolStats,
-  DEFAULT_SYSTEM_PROMPT,
-  generateMessageId,
-  generateSessionId,
-} from './agent-factory';
 import { AgentLoopExecutor } from './agent-loop';
 import { ClaudeClient } from './claude-client';
+
+/**
+ * 生成唯一ID
+ */
+function generateId(prefix: string = 'id'): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+/**
+ * 创建 Agent 配置
+ */
+function createAgentConfig(options: AgentOptions) {
+  // 获取简化的配置
+  const claudeConfig = getClaudeConfig();
+  
+  // 构建最终的 Claude 配置（优先级：options > globalConfig > defaults）
+  const finalConfig = {
+    apiKey: options.apiKey || claudeConfig.apiKey,
+    baseURL: options.configOverrides?.baseUrl || claudeConfig.baseUrl || 'https://api.anthropic.com',
+    model: FIXED_AGENT_CONFIG.model,
+    maxTokens: FIXED_AGENT_CONFIG.maxTokens,
+    temperature: FIXED_AGENT_CONFIG.temperature,
+  };
+
+  // 验证必要配置
+  if (!finalConfig.apiKey) {
+    throw new Error('Claude API key is required. Please set ANTHROPIC_API_KEY environment variable or configure it in ~/.prism/config.json');
+  }
+
+  return finalConfig;
+}
 
 /**
  * 代码审查 Agent 主类 - 重构后版本
@@ -46,21 +72,30 @@ export class CodeReviewAgent {
     toolRegistry: ToolRegistry,
     toolScheduler: ToolScheduler
   ) {
+    // 创建配置
+    const claudeConfig = createAgentConfig(options);
+    
     // 创建 Claude 客户端
-    this.claudeClient = createClaudeClient(options);
+    this.claudeClient = new ClaudeClient({
+      apiKey: claudeConfig.apiKey!,
+      model: claudeConfig.model!,
+      maxTokens: claudeConfig.maxTokens!,
+      temperature: claudeConfig.temperature!,
+      baseURL: claudeConfig.baseURL!,
+    });
+    
     this.toolRegistry = toolRegistry;
     this.toolScheduler = toolScheduler;
 
     // 创建 Agent Loop 执行器
-    this.agentLoopExecutor = createAgentLoopExecutor(
+    this.agentLoopExecutor = new AgentLoopExecutor(
       this.claudeClient,
       toolRegistry,
       toolScheduler
     );
 
     // 构建 Agent 配置
-    const claudeConfig = createAgentConfig(options);
-    const systemPrompt = options.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    const systemPrompt = options.systemPrompt;
     this.config = {
       model: claudeConfig.model!,
       maxTokens: claudeConfig.maxTokens!,
@@ -71,7 +106,7 @@ export class CodeReviewAgent {
 
     // 初始化上下文
     this.context = {
-      sessionId: generateSessionId(),
+      sessionId: generateId('session'),
       messages: [],
       toolRegistry,
       config: this.config,
@@ -98,7 +133,7 @@ export class CodeReviewAgent {
 
       // 添加用户消息到上下文
       const userMsg: Message = {
-        id: generateMessageId(),
+        id: generateId(),
         role: 'user',
         content: userMessage,
         timestamp: Date.now(),
@@ -143,7 +178,7 @@ export class CodeReviewAgent {
 
       // 添加用户消息
       const userMsg: Message = {
-        id: generateMessageId(),
+        id: generateId(),
         role: 'user',
         content: userMessage,
         timestamp: Date.now(),
@@ -211,7 +246,11 @@ export class CodeReviewAgent {
    * 获取工具执行统计
    */
   getToolStats(): AgentStats {
-    return createDefaultToolStats(this.toolRegistry);
+    return {
+      totalTools: this.toolRegistry.list().length,
+      enabledTools: this.toolRegistry.list().length,
+      lastExecution: Date.now(),
+    };
   }
 
   /**
