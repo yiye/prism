@@ -9,7 +9,7 @@ import type {
   StreamEvent,
 } from '@/types';
 
-import { getGlobalConfigManager, FIXED_AGENT_CONFIG } from '../../config/agent-config';
+import { FIXED_AGENT_CONFIG } from '../../config/agent-config';
 import {
   CodeReviewAgent,
   createCodeReviewAgent,
@@ -18,6 +18,10 @@ import { buildContextualPrompt } from './prompt';
 // Tool System Imports
 import { createEnhancedCodeReviewToolRegistry } from './tools/tool-registry';
 import { createDefaultToolScheduler } from './tools/tool-scheduler';
+import {
+  IdGenerator,
+  TimeUtils,
+} from './utils/agent-utils';
 
 // === 会话管理相关类型 ===
 export interface SessionConfig {
@@ -71,18 +75,169 @@ export interface HealthCheckResponse {
 }
 
 /**
- * 统一的 Agent 服务类
- * 🎯 提供 route.ts 需要的所有 API
+ * 会话管理器 - 单一职责：管理 Agent 会话生命周期
+ * 🎯 从 AgentService 中提取，符合单一职责原则
  */
-export class AgentService {
+class SessionManager {
   private sessions = new Map<string, AgentSession>();
   private cleanupInterval: NodeJS.Timeout;
 
   constructor() {
-    // 使用固定配置的清理间隔
     this.cleanupInterval = setInterval(() => {
       this.cleanupExpiredSessions();
     }, FIXED_AGENT_CONFIG.cleanupInterval);
+  }
+
+  /**
+   * 创建新的 Agent 会话
+   */
+  async createSession(config: SessionConfig): Promise<string> {
+    const sessionId = this.generateSessionId();
+    const projectPath = config.projectPath || process.cwd();
+
+    try {
+      // 构建系统 Prompt
+      const systemPrompt = await buildContextualPrompt(projectPath, {
+        userMemory: config.userMemory,
+        customInstructions: config.customInstructions,
+      });
+
+      // 创建工具注册表和调度器
+      const toolRegistry = createEnhancedCodeReviewToolRegistry(projectPath);
+      const toolScheduler = createDefaultToolScheduler(projectPath);
+
+      // 创建 Agent 实例
+      const agentOptions: AgentOptions = {
+        apiKey: config.apiKey,
+        configOverrides: {
+          baseUrl: config.baseUrl,
+        },
+        systemPrompt,
+        projectRoot: projectPath,
+        maxTurns: 50,
+      };
+
+      const agent = createCodeReviewAgent(agentOptions, toolRegistry, toolScheduler);
+
+      // 创建会话对象
+      const session: AgentSession = {
+        id: sessionId,
+        agent,
+        createdAt: TimeUtils.now(),
+        lastActivity: TimeUtils.now(),
+        projectPath,
+        userMemory: config.userMemory,
+        customInstructions: config.customInstructions,
+      };
+
+      this.sessions.set(sessionId, session);
+
+      console.log(`📅 Created agent session: ${sessionId} with ToolScheduler`);
+      return sessionId;
+
+    } catch (error) {
+      console.error('Failed to create agent session:', error);
+      throw new Error(`Failed to create agent session: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * 获取会话
+   */
+  getSession(sessionId: string): AgentSession | undefined {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.lastActivity = TimeUtils.now();
+    }
+    return session;
+  }
+
+  /**
+   * 设置 SSE 控制器
+   */
+  setSSEController(sessionId: string, controller: ReadableStreamDefaultController): void {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.sseController = controller;
+    }
+  }
+
+  /**
+   * 获取所有活跃会话
+   */
+  getActiveSessions(): AgentSession[] {
+    return Array.from(this.sessions.values());
+  }
+
+  /**
+   * 删除会话
+   */
+  deleteSession(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      // 取消正在进行的操作
+      session.agent.cancel();
+      
+      // 关闭 SSE 连接
+      if (session.sseController) {
+        try {
+          session.sseController.close();
+        } catch (error) {
+          console.warn(`Failed to close SSE controller for session ${sessionId}:`, error);
+        }
+      }
+      
+      this.sessions.delete(sessionId);
+      console.log(`🗑️ Deleted session: ${sessionId}`);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 清理过期会话
+   */
+  private cleanupExpiredSessions(): void {
+    const sessionTimeout = FIXED_AGENT_CONFIG.sessionTimeout;
+    
+    for (const [sessionId, session] of this.sessions) {
+      if (TimeUtils.isExpired(session.lastActivity, sessionTimeout)) {
+        console.log(`🧹 Cleaning up expired session: ${sessionId}`);
+        this.deleteSession(sessionId);
+      }
+    }
+  }
+
+  /**
+   * 生成会话 ID
+   */
+  private generateSessionId(): string {
+    return IdGenerator.generateAgentServiceSessionId();
+  }
+
+  /**
+   * 关闭会话管理器
+   */
+  shutdown(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
+    
+    for (const sessionId of this.sessions.keys()) {
+      this.deleteSession(sessionId);
+    }
+  }
+}
+
+/**
+ * 统一的 Agent 服务类
+ * 🎯 重构后：专注于 API 层面的协调
+ */
+export class AgentService {
+  private sessionManager: SessionManager;
+
+  constructor() {
+    this.sessionManager = new SessionManager();
   }
 
   /**
@@ -95,7 +250,7 @@ export class AgentService {
     try {
       // 如果提供了现有会话ID，尝试获取
       if (existingSessionId) {
-        const session = this.getSession(existingSessionId);
+        const session = this.sessionManager.getSession(existingSessionId);
         if (session) {
           return {
             success: true,
@@ -106,7 +261,7 @@ export class AgentService {
       }
 
       // 创建新会话
-      const sessionId = await this.createSession(config);
+      const sessionId = await this.sessionManager.createSession(config);
       return {
         success: true,
         sessionId,
@@ -128,7 +283,7 @@ export class AgentService {
     sessionId: string, 
     message: string
   ): Promise<ServiceResponse<ProcessMessageResponse>> {
-    const session = this.getSession(sessionId);
+    const session = this.sessionManager.getSession(sessionId);
     if (!session) {
       return {
         success: false,
@@ -186,7 +341,7 @@ export class AgentService {
     sessionId: string,
     message: string
   ): AsyncGenerator<SSEEvent, void, unknown> {
-    const session = this.getSession(sessionId);
+    const session = this.sessionManager.getSession(sessionId);
     if (!session) {
       yield {
         type: 'error',
@@ -199,7 +354,7 @@ export class AgentService {
       // 发送连接事件
       yield {
         type: 'connected',
-        data: { sessionId, timestamp: Date.now() },
+        data: { sessionId, timestamp: TimeUtils.now() },
       };
 
       // 获取 Agent 流式响应
@@ -216,7 +371,7 @@ export class AgentService {
             type: 'complete',
             data: { 
               sessionId, 
-              timestamp: Date.now(),
+              timestamp: TimeUtils.now(),
               toolStats: session.agent.getToolStats(),
             },
           };
@@ -243,10 +398,7 @@ export class AgentService {
     sessionId: string,
     controller: ReadableStreamDefaultController
   ): void {
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      session.sseController = controller;
-    }
+    this.sessionManager.setSSEController(sessionId, controller);
   }
 
   /**
@@ -257,7 +409,7 @@ export class AgentService {
     let overallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
 
     // 检查会话管理器状态
-    const activeSessions = this.getActiveSessions().length;
+    const activeSessions = this.sessionManager.getActiveSessions().length;
     checks.push({
       name: 'session_manager',
       status: 'ok' as const,
@@ -288,76 +440,6 @@ export class AgentService {
     };
   }
 
-  // === 内部方法 ===
-
-  /**
-   * 创建新的 Agent 会话
-   */
-  private async createSession(config: SessionConfig): Promise<string> {
-    const sessionId = this.generateSessionId();
-    const projectPath = config.projectPath || process.cwd();
-
-    try {
-      // 获取配置管理器
-      const configManager = getGlobalConfigManager();
-      const globalConfig = configManager.getAllConfig();
-
-      // 构建系统 Prompt
-      const systemPrompt = await buildContextualPrompt(projectPath, {
-        userMemory: config.userMemory,
-        customInstructions: config.customInstructions,
-      });
-
-      // 创建工具注册表和调度器
-      const toolRegistry = createEnhancedCodeReviewToolRegistry(projectPath);
-      const toolScheduler = createDefaultToolScheduler(projectPath);
-
-      // 创建 Agent 实例
-      const agentOptions: AgentOptions = {
-        apiKey: config.apiKey,
-        configOverrides: {
-          baseUrl: config.baseUrl,
-        },
-        systemPrompt,
-        projectRoot: projectPath,
-        maxTurns: 50,
-      };
-
-      const agent = createCodeReviewAgent(agentOptions, toolRegistry, toolScheduler);
-
-      // 创建会话对象
-      const session: AgentSession = {
-        id: sessionId,
-        agent,
-        createdAt: Date.now(),
-        lastActivity: Date.now(),
-        projectPath,
-        userMemory: config.userMemory,
-        customInstructions: config.customInstructions,
-      };
-
-      this.sessions.set(sessionId, session);
-
-      console.log(`📅 Created agent session: ${sessionId} with ToolScheduler`);
-      return sessionId;
-
-    } catch (error) {
-      console.error('Failed to create agent session:', error);
-      throw new Error(`Failed to create agent session: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  /**
-   * 获取会话
-   */
-  private getSession(sessionId: string): AgentSession | undefined {
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      session.lastActivity = Date.now();
-    }
-    return session;
-  }
-
   /**
    * 转换 Agent 事件为 SSE 事件
    */
@@ -367,79 +449,16 @@ export class AgentService {
       data: {
         ...event.data,
         sessionId,
-        timestamp: Date.now(),
+        timestamp: TimeUtils.now(),
       },
     };
-  }
-
-  /**
-   * 获取所有活跃会话
-   */
-  private getActiveSessions(): AgentSession[] {
-    return Array.from(this.sessions.values());
-  }
-
-  /**
-   * 清理过期会话（使用固定的超时时间）
-   */
-  private cleanupExpiredSessions(): void {
-    const now = Date.now();
-    const sessionTimeout = FIXED_AGENT_CONFIG.sessionTimeout;
-    
-    for (const [sessionId, session] of this.sessions) {
-      if (now - session.lastActivity > sessionTimeout) {
-        console.log(`🧹 Cleaning up expired session: ${sessionId}`);
-        this.deleteSession(sessionId);
-      }
-    }
-  }
-
-  /**
-   * 删除会话
-   */
-  private deleteSession(sessionId: string): boolean {
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      // 取消正在进行的操作
-      session.agent.cancel();
-      
-      // 关闭 SSE 连接
-      if (session.sseController) {
-        try {
-          session.sseController.close();
-        } catch (error) {
-          console.warn(`Failed to close SSE controller for session ${sessionId}:`, error);
-        }
-      }
-      
-      this.sessions.delete(sessionId);
-      console.log(`🗑️ Deleted session: ${sessionId}`);
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * 生成会话 ID
-   */
-  private generateSessionId(): string {
-    return `agent_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
   /**
    * 关闭服务
    */
   shutdown(): void {
-    // 清理定时器
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-    }
-    
-    // 关闭所有会话
-    for (const sessionId of this.sessions.keys()) {
-      this.deleteSession(sessionId);
-    }
-    
+    this.sessionManager.shutdown();
     console.log('🔌 Agent Service shutdown complete');
   }
 }

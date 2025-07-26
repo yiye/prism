@@ -7,52 +7,94 @@
 import {
   AgentConfig,
   AgentContext,
-  AgentError,
   AgentOptions,
   AgentResponse,
   AgentStats,
   Message,
   StreamEvent,
-} from '../../../../types';
+} from '@/types';
+
 import {
   FIXED_AGENT_CONFIG,
   getClaudeConfig,
 } from '../../../config/agent-config';
 import { ToolRegistry } from '../tools/tool-registry';
 import { ToolScheduler } from '../tools/tool-scheduler';
+import {
+  ErrorHandler,
+  IdGenerator,
+  TimeUtils,
+} from '../utils/agent-utils';
 import { AgentLoopExecutor } from './agent-loop';
 import { ClaudeClient } from './claude-client';
 
 /**
- * 生成唯一ID
+ * 配置工厂 - 统一配置创建和验证逻辑
+ * 🎯 提高配置管理的一致性和可维护性
  */
-function generateId(prefix: string = 'id'): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-}
+class ConfigFactory {
+  /**
+   * 创建 Claude 客户端配置
+   */
+  static createClaudeConfig(options: AgentOptions) {
+    const claudeConfig = getClaudeConfig();
+    
+    const finalConfig = {
+      apiKey: options.apiKey || claudeConfig.apiKey,
+      baseURL: options.configOverrides?.baseUrl || claudeConfig.baseUrl || 'https://api.anthropic.com',
+      model: FIXED_AGENT_CONFIG.model,
+      maxTokens: FIXED_AGENT_CONFIG.maxTokens,
+      temperature: FIXED_AGENT_CONFIG.temperature,
+    };
 
-/**
- * 创建 Agent 配置
- */
-function createAgentConfig(options: AgentOptions) {
-  // 获取简化的配置
-  const claudeConfig = getClaudeConfig();
-  
-  // 构建最终的 Claude 配置（优先级：options > globalConfig > defaults）
-  const finalConfig = {
-    apiKey: options.apiKey || claudeConfig.apiKey,
-    baseURL: options.configOverrides?.baseUrl || claudeConfig.baseUrl || 'https://api.anthropic.com',
-    model: FIXED_AGENT_CONFIG.model,
-    maxTokens: FIXED_AGENT_CONFIG.maxTokens,
-    temperature: FIXED_AGENT_CONFIG.temperature,
-  };
+    // 验证必要配置
+    if (!finalConfig.apiKey) {
+      throw new Error('Claude API key is required. Please set ANTHROPIC_API_KEY environment variable or configure it in ~/.prism/config.json');
+    }
 
-  // 验证必要配置
-  if (!finalConfig.apiKey) {
-    throw new Error('Claude API key is required. Please set ANTHROPIC_API_KEY environment variable or configure it in ~/.prism/config.json');
+    return finalConfig;
   }
 
-  return finalConfig;
+  /**
+   * 创建 Agent 配置
+   */
+  static createAgentConfig(options: AgentOptions, toolRegistry: ToolRegistry): AgentConfig {
+    const claudeConfig = this.createClaudeConfig(options);
+    
+    return {
+      model: claudeConfig.model!,
+      maxTokens: claudeConfig.maxTokens!,
+      temperature: claudeConfig.temperature!,
+      tools: toolRegistry.list().map(tool => tool.name),
+      systemPrompt: options.systemPrompt,
+    };
+  }
+
+  /**
+   * 创建 Agent 上下文
+   */
+  static createAgentContext(
+    config: AgentConfig, 
+    toolRegistry: ToolRegistry,
+    options: AgentOptions
+  ): AgentContext {
+    return {
+      sessionId: IdGenerator.generateSessionId(),
+      messages: [],
+      toolRegistry,
+      config,
+      state: {
+        status: 'idle',
+        currentTurn: 0,
+        maxTurns: options.maxTurns || 20,
+        tokensUsed: 0,
+        lastActivity: TimeUtils.now(),
+      },
+    };
+  }
 }
+
+
 
 /**
  * 代码审查 Agent 主类 - 重构后版本
@@ -72,8 +114,8 @@ export class CodeReviewAgent {
     toolRegistry: ToolRegistry,
     toolScheduler: ToolScheduler
   ) {
-    // 创建配置
-    const claudeConfig = createAgentConfig(options);
+    // 使用配置工厂创建配置
+    const claudeConfig = ConfigFactory.createClaudeConfig(options);
     
     // 创建 Claude 客户端
     this.claudeClient = new ClaudeClient({
@@ -94,30 +136,9 @@ export class CodeReviewAgent {
       toolScheduler
     );
 
-    // 构建 Agent 配置
-    const systemPrompt = options.systemPrompt;
-    this.config = {
-      model: claudeConfig.model!,
-      maxTokens: claudeConfig.maxTokens!,
-      temperature: claudeConfig.temperature!,
-      tools: toolRegistry.list().map(tool => tool.name),
-      systemPrompt,
-    };
-
-    // 初始化上下文
-    this.context = {
-      sessionId: generateId('session'),
-      messages: [],
-      toolRegistry,
-      config: this.config,
-      state: {
-        status: 'idle',
-        currentTurn: 0,
-        maxTurns: options.maxTurns || 20,
-        tokensUsed: 0,
-        lastActivity: Date.now(),
-      },
-    };
+    // 使用配置工厂创建 Agent 配置和上下文
+    this.config = ConfigFactory.createAgentConfig(options, toolRegistry);
+    this.context = ConfigFactory.createAgentContext(this.config, toolRegistry, options);
 
     console.log(`🤖 Created Agent with model: ${claudeConfig.model}, scheduler: enabled`);
   }
@@ -129,14 +150,14 @@ export class CodeReviewAgent {
   async processMessage(userMessage: string): Promise<AgentResponse> {
     try {
       this.context.state.status = 'thinking';
-      this.context.state.lastActivity = Date.now();
+      this.context.state.lastActivity = TimeUtils.now();
 
       // 添加用户消息到上下文
       const userMsg: Message = {
-        id: generateId(),
+        id: IdGenerator.generate(),
         role: 'user',
         content: userMessage,
-        timestamp: Date.now(),
+        timestamp: TimeUtils.now(),
       };
       this.context.messages.push(userMsg);
 
@@ -157,7 +178,7 @@ export class CodeReviewAgent {
 
     } catch (error) {
       this.context.state.status = 'error';
-      throw this.createAgentError(error);
+      throw ErrorHandler.createAgentError(error);
     }
   }
 
@@ -178,10 +199,10 @@ export class CodeReviewAgent {
 
       // 添加用户消息
       const userMsg: Message = {
-        id: generateId(),
+        id: IdGenerator.generate(),
         role: 'user',
         content: userMessage,
-        timestamp: Date.now(),
+        timestamp: TimeUtils.now(),
       };
       this.context.messages.push(userMsg);
 
@@ -198,7 +219,7 @@ export class CodeReviewAgent {
       this.context.state.status = 'error';
       yield {
         type: 'error',
-        data: { error: this.createAgentError(error) },
+        data: { error: ErrorHandler.createAgentError(error) },
       };
     }
   }
@@ -253,17 +274,7 @@ export class CodeReviewAgent {
     };
   }
 
-  /**
-   * 创建标准化错误
-   */
-  private createAgentError(error: unknown): AgentError {
-    return {
-      code: 'AGENT_ERROR',
-      message: error instanceof Error ? error.message : String(error),
-      timestamp: Date.now(),
-      details: error instanceof Error ? { stack: error.stack } : { error },
-    };
-  }
+
 }
 
 /**
