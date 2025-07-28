@@ -8,25 +8,20 @@ import {
   AgentConfig,
   AgentContext,
   AgentOptions,
-  AgentResponse,
   AgentStats,
   Message,
   StreamEvent,
-} from '@/types';
+} from "@/types";
 
 import {
   FIXED_AGENT_CONFIG,
   getClaudeConfig,
-} from '../../../config/agent-config';
-import { ToolRegistry } from '../tools/tool-registry';
-import { ToolScheduler } from '../tools/tool-scheduler';
-import {
-  ErrorHandler,
-  IdGenerator,
-  TimeUtils,
-} from '../utils/agent-utils';
-import { AgentLoopExecutor } from './agent-loop';
-import { ClaudeClient } from './claude-client';
+} from "../../../config/agent-config";
+import { ToolRegistry } from "../tools/tool-registry";
+import { ToolScheduler } from "../tools/tool-scheduler";
+import { ErrorHandler, IdGenerator, TimeUtils } from "../utils/agent-utils";
+import { AgentLoopExecutor } from "./agent-loop";
+import { ClaudeClient } from "./claude-client";
 
 /**
  * 配置工厂 - 统一配置创建和验证逻辑
@@ -38,10 +33,13 @@ class ConfigFactory {
    */
   static createClaudeConfig(options: AgentOptions) {
     const claudeConfig = getClaudeConfig();
-    
+
     const finalConfig = {
       apiKey: options.apiKey || claudeConfig.apiKey,
-      baseURL: options.configOverrides?.baseUrl || claudeConfig.baseUrl || 'https://api.anthropic.com',
+      baseURL:
+        options.configOverrides?.baseUrl ||
+        claudeConfig.baseUrl ||
+        "https://api.anthropic.com",
       model: FIXED_AGENT_CONFIG.model,
       maxTokens: FIXED_AGENT_CONFIG.maxTokens,
       temperature: FIXED_AGENT_CONFIG.temperature,
@@ -49,7 +47,9 @@ class ConfigFactory {
 
     // 验证必要配置
     if (!finalConfig.apiKey) {
-      throw new Error('Claude API key is required. Please set ANTHROPIC_API_KEY environment variable or configure it in ~/.prism/config.json');
+      throw new Error(
+        "Claude API key is required. Please set ANTHROPIC_API_KEY environment variable or configure it in ~/.prism/config.json"
+      );
     }
 
     return finalConfig;
@@ -58,14 +58,17 @@ class ConfigFactory {
   /**
    * 创建 Agent 配置
    */
-  static createAgentConfig(options: AgentOptions, toolRegistry: ToolRegistry): AgentConfig {
+  static createAgentConfig(
+    options: AgentOptions,
+    toolRegistry: ToolRegistry
+  ): AgentConfig {
     const claudeConfig = this.createClaudeConfig(options);
-    
+
     return {
       model: claudeConfig.model!,
       maxTokens: claudeConfig.maxTokens!,
       temperature: claudeConfig.temperature!,
-      tools: toolRegistry.list().map(tool => tool.name),
+      tools: toolRegistry.list().map((tool) => tool.name),
       systemPrompt: options.systemPrompt,
     };
   }
@@ -74,7 +77,7 @@ class ConfigFactory {
    * 创建 Agent 上下文
    */
   static createAgentContext(
-    config: AgentConfig, 
+    config: AgentConfig,
     toolRegistry: ToolRegistry,
     options: AgentOptions
   ): AgentContext {
@@ -84,7 +87,7 @@ class ConfigFactory {
       toolRegistry,
       config,
       state: {
-        status: 'idle',
+        status: "idle",
         currentTurn: 0,
         maxTurns: options.maxTurns || 20,
         tokensUsed: 0,
@@ -93,8 +96,6 @@ class ConfigFactory {
     };
   }
 }
-
-
 
 /**
  * 代码审查 Agent 主类 - 重构后版本
@@ -110,13 +111,13 @@ export class CodeReviewAgent {
   private abortController?: AbortController;
 
   constructor(
-    options: AgentOptions, 
+    options: AgentOptions,
     toolRegistry: ToolRegistry,
     toolScheduler: ToolScheduler
   ) {
     // 使用配置工厂创建配置
     const claudeConfig = ConfigFactory.createClaudeConfig(options);
-    
+
     // 创建 Claude 客户端
     this.claudeClient = new ClaudeClient({
       apiKey: claudeConfig.apiKey!,
@@ -125,7 +126,7 @@ export class CodeReviewAgent {
       temperature: claudeConfig.temperature!,
       baseURL: claudeConfig.baseURL!,
     });
-    
+
     this.toolRegistry = toolRegistry;
     this.toolScheduler = toolScheduler;
 
@@ -138,69 +139,38 @@ export class CodeReviewAgent {
 
     // 使用配置工厂创建 Agent 配置和上下文
     this.config = ConfigFactory.createAgentConfig(options, toolRegistry);
-    this.context = ConfigFactory.createAgentContext(this.config, toolRegistry, options);
+    this.context = ConfigFactory.createAgentContext(
+      this.config,
+      toolRegistry,
+      options
+    );
 
-    console.log(`🤖 Created Agent with model: ${claudeConfig.model}, scheduler: enabled`);
-  }
-
-  /**
-   * 处理用户消息（非流式）
-   * 参考 qwen-code 的消息处理流程
-   */
-  async processMessage(userMessage: string): Promise<AgentResponse> {
-    try {
-      this.context.state.status = 'thinking';
-      this.context.state.lastActivity = TimeUtils.now();
-
-      // 添加用户消息到上下文
-      const userMsg: Message = {
-        id: IdGenerator.generate(),
-        role: 'user',
-        content: userMessage,
-        timestamp: TimeUtils.now(),
-      };
-      this.context.messages.push(userMsg);
-
-      // 委托给 Agent Loop 执行器
-      const result = await this.agentLoopExecutor.executeLoop(
-        this.context,
-        this.config.systemPrompt as string,
-        this.abortController
-      );
-      
-      this.context.state.status = 'idle';
-      
-      return {
-        message: result,
-        context: this.context,
-        completed: this.isConversationComplete(),
-      };
-
-    } catch (error) {
-      this.context.state.status = 'error';
-      throw ErrorHandler.createAgentError(error);
-    }
+    console.log(
+      `🤖 Created Agent with model: ${claudeConfig.model}, scheduler: enabled`
+    );
   }
 
   /**
    * 流式处理用户消息
    * 参考 qwen-code 的流式响应机制
    */
-  async *processMessageStream(userMessage: string): AsyncGenerator<StreamEvent, void, unknown> {
+  async *processMessageStream(
+    userMessage: string
+  ): AsyncGenerator<StreamEvent, void, unknown> {
     try {
       this.abortController = new AbortController();
-      this.context.state.status = 'thinking';
+      this.context.state.status = "thinking";
       this.context.state.lastActivity = Date.now();
 
       yield {
-        type: 'thinking',
-        data: { content: 'Processing your request...' },
+        type: "thinking",
+        data: { content: "Processing your request..." },
       };
 
       // 添加用户消息
       const userMsg: Message = {
         id: IdGenerator.generate(),
-        role: 'user',
+        role: "user",
         content: userMessage,
         timestamp: TimeUtils.now(),
       };
@@ -213,12 +183,11 @@ export class CodeReviewAgent {
         this.abortController
       );
 
-      this.context.state.status = 'idle';
-
+      this.context.state.status = "idle";
     } catch (error) {
-      this.context.state.status = 'error';
+      this.context.state.status = "error";
       yield {
-        type: 'error',
+        type: "error",
         data: { error: ErrorHandler.createAgentError(error) },
       };
     }
@@ -228,8 +197,10 @@ export class CodeReviewAgent {
    * 检查对话是否完成
    */
   private isConversationComplete(): boolean {
-    return this.context.state.currentTurn >= this.context.state.maxTurns ||
-           this.context.state.status === 'error';
+    return (
+      this.context.state.currentTurn >= this.context.state.maxTurns ||
+      this.context.state.status === "error"
+    );
   }
 
   /**
@@ -239,7 +210,7 @@ export class CodeReviewAgent {
     if (this.abortController) {
       this.abortController.abort();
     }
-    this.context.state.status = 'idle';
+    this.context.state.status = "idle";
   }
 
   /**
@@ -248,7 +219,7 @@ export class CodeReviewAgent {
   reset(): void {
     this.context.messages = [];
     this.context.state = {
-      status: 'idle',
+      status: "idle",
       currentTurn: 0,
       maxTurns: this.context.state.maxTurns,
       tokensUsed: 0,
@@ -273,8 +244,6 @@ export class CodeReviewAgent {
       lastExecution: Date.now(),
     };
   }
-
-
 }
 
 /**
@@ -287,4 +256,4 @@ export function createCodeReviewAgent(
   toolScheduler: ToolScheduler
 ): CodeReviewAgent {
   return new CodeReviewAgent(options, toolRegistry, toolScheduler);
-} 
+}

@@ -102,7 +102,7 @@ export function PromptEditor({
           </div>
         ) : (
           <div className="text-gray-500 text-center py-8">
-            Click "Show Preview" to view the current system prompt
+            Click &quot;Show Preview&quot; to view the current system prompt
           </div>
         )}
       </div>

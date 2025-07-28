@@ -7,19 +7,15 @@ import {
   AgentContext,
   ClaudeContent,
   ClaudeMessage,
-  ClaudeResponse,
   ClaudeStreamEvent,
   Message,
   StreamEvent,
   ToolCall,
-} from '@/types';
+} from "@/types";
 
-import { ToolRegistry } from '../tools/tool-registry';
-import {
-  type ExecutionOptions,
-  ToolScheduler,
-} from '../tools/tool-scheduler';
-import { ClaudeClient } from './claude-client';
+import { ToolRegistry } from "../tools/tool-registry";
+import { ToolScheduler, type ExecutionOptions } from "../tools/tool-scheduler";
+import { ClaudeClient } from "./claude-client";
 
 /**
  * Agent Loop 执行器
@@ -33,52 +29,6 @@ export class AgentLoopExecutor {
   ) {}
 
   /**
-   * 执行 Agent Loop
-   * 参考 qwen-code 的 Turn-based 循环机制
-   */
-  async executeLoop(
-    context: AgentContext,
-    systemPrompt: string,
-    abortController?: AbortController
-  ): Promise<Message> {
-    let attempts = 0;
-    
-    while (attempts < context.state.maxTurns) {
-      context.state.currentTurn = attempts + 1;
-      
-             try {
-         // 构建 Claude 消息
-         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-         const claudeMessages = this.buildClaudeMessages(context) as any;
-         
-         // 调用 Claude API
-        const response = await this.claudeClient.generateContent(
-          claudeMessages,
-          this.getAvailableTools(),
-          systemPrompt
-        );
-
-        // 处理响应
-        const result = await this.processClaudeResponse(response, context, abortController);
-        
-        if (result) {
-          return result;
-        }
-
-        attempts++;
-      } catch (error) {
-        if (attempts >= context.state.maxTurns - 1) {
-          throw error;
-        }
-        console.warn(`Agent loop attempt ${attempts + 1} failed:`, error);
-        attempts++;
-      }
-    }
-
-    throw new Error('Agent loop exceeded maximum turns');
-  }
-
-  /**
    * 流式执行 Agent Loop
    */
   async *executeLoopStream(
@@ -87,17 +37,17 @@ export class AgentLoopExecutor {
     abortController?: AbortController
   ): AsyncGenerator<StreamEvent, void, unknown> {
     let attempts = 0;
-    
+
     while (attempts < context.state.maxTurns) {
       context.state.currentTurn = attempts + 1;
-      
-             try {
-         // 构建 Claude 消息
-         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-         const claudeMessages = this.buildClaudeMessages(context) as any;
-         
-         yield {
-          type: 'thinking',
+
+      try {
+        // 构建 Claude 消息
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const claudeMessages = this.buildClaudeMessages(context) as any;
+
+        yield {
+          type: "thinking",
           data: { content: `Turn ${attempts + 1}: Analyzing your request...` },
         };
 
@@ -109,7 +59,7 @@ export class AgentLoopExecutor {
         );
 
         // 处理流式响应
-        let accumulatedContent = '';
+        let accumulatedContent = "";
         let pendingToolCalls: ToolCall[] = [];
 
         for await (const event of responseStream) {
@@ -117,9 +67,9 @@ export class AgentLoopExecutor {
             return;
           }
 
-          const streamResult = await this.processStreamEvent(
-            event, 
-            accumulatedContent, 
+          const streamResult = this.processStreamEvent(
+            event,
+            accumulatedContent,
             pendingToolCalls
           );
 
@@ -133,27 +83,46 @@ export class AgentLoopExecutor {
           pendingToolCalls = streamResult.toolCalls;
         }
 
-        // 如果有工具调用，执行它们
-        if (pendingToolCalls.length > 0) {
-          yield* this.executeToolsStream(pendingToolCalls, context, abortController);
-        }
-
-        // 如果没有工具调用，返回最终响应
-        if (pendingToolCalls.length === 0 && accumulatedContent) {
-          const finalMessage: Message = {
+        // 🎯 关键修复：保存 Claude 的响应内容到 context
+        if (accumulatedContent.trim()) {
+          const assistantMessage: Message = {
             id: this.generateMessageId(),
-            role: 'assistant',
+            role: "assistant",
             content: accumulatedContent,
             timestamp: Date.now(),
           };
+          context.messages.push(assistantMessage);
+        }
 
-          context.messages.push(finalMessage);
+        // 如果有工具调用，执行它们
+        if (pendingToolCalls.length > 0) {
+          yield* this.executeToolsStream(
+            pendingToolCalls,
+            context,
+            abortController
+          );
 
+          // 🎯 关键修复：工具执行后继续下一轮循环
+          attempts++;
+          continue;
+        }
+
+        // 🎯 关键修复：如果没有工具调用且有内容，返回最终响应
+        if (pendingToolCalls.length === 0 && accumulatedContent.trim()) {
           yield {
-            type: 'complete',
-            data: { message: finalMessage },
+            type: "complete",
+            data: { message: context.messages[context.messages.length - 1] },
           };
           return;
+        }
+
+        // 🎯 关键修复：如果既没有工具调用也没有内容，可能是错误情况
+        if (pendingToolCalls.length === 0 && !accumulatedContent.trim()) {
+          console.warn(
+            `Turn ${attempts + 1}: No content or tool calls generated`
+          );
+          attempts++;
+          continue;
         }
 
         attempts++;
@@ -166,111 +135,55 @@ export class AgentLoopExecutor {
       }
     }
 
-    throw new Error('Agent loop exceeded maximum turns');
+    throw new Error("Agent loop exceeded maximum turns");
   }
 
-     /**
-    * 处理 Claude 响应
-    */
-   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-   private async processClaudeResponse(
-     response: ClaudeResponse,
-    context: AgentContext,
-    abortController?: AbortController
-  ): Promise<Message | null> {
-    const content = response.content || [];
-    let textContent = '';
-    const toolCalls: ToolCall[] = [];
-
-    // 解析响应内容
-    for (const block of content) {
-      if (block.type === 'text') {
-        textContent += block.text;
-      } else if (block.type === 'tool_use') {
-        toolCalls.push({
-          id: block.id || '',
-          tool: block.name || '',
-          params: block.input || {},
-          status: 'pending',
-        });
-      }
-    }
-
-    // 如果有工具调用，执行它们
-    if (toolCalls.length > 0) {
-      await this.executeTools(toolCalls, context, abortController);
-      return null; // 继续循环
-    }
-
-    // 如果没有工具调用，返回响应
-    if (textContent) {
-      const assistantMessage: Message = {
-        id: this.generateMessageId(),
-        role: 'assistant',
-        content: textContent,
-        timestamp: Date.now(),
-        metadata: {
-          model: response.model,
-          tokens: {
-            input: response.usage?.input_tokens || 0,
-            output: response.usage?.output_tokens || 0,
-          },
-        },
-      };
-
-      context.messages.push(assistantMessage);
-      context.state.tokensUsed += (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0);
-
-      return assistantMessage;
-    }
-
-    return null;
-  }
-
-     /**
-    * 处理流式事件
-    */
-   private async processStreamEvent(
-     event: ClaudeStreamEvent,
+  /**
+   * 处理流式事件
+   */
+  private processStreamEvent(
+    event: ClaudeStreamEvent,
     currentContent: string,
     currentToolCalls: ToolCall[]
-  ): Promise<{
+  ): {
     content: string;
     toolCalls: ToolCall[];
     events?: StreamEvent[];
-  }> {
+  } {
     const events: StreamEvent[] = [];
 
     switch (event.type) {
-      case 'content_block_delta':
-        if (event.delta?.text) {
+      case "content_block_delta":
+        if (event.delta?.text && typeof event.delta.text === "string") {
+          // 累积内容用于内部状态管理
           currentContent += event.delta.text;
+          // 发送增量内容给前端，实现打字机效果
           events.push({
-            type: 'response',
-            data: { content: currentContent },
+            type: "response",
+            data: { content: event.delta.text },
           });
         }
         break;
 
-      case 'content_block_start':
-        if (event.content_block?.type === 'tool_use') {
+      case "content_block_start":
+        if (event.content_block?.type === "tool_use") {
           const contentBlock = event.content_block as Record<string, unknown>;
           const toolCall: ToolCall = {
-            id: String(contentBlock.id || ''),
-            tool: String(contentBlock.name || ''),
+            id: String(contentBlock.id || ""),
+            tool: String(contentBlock.name || ""),
             params: {},
-            status: 'pending',
+            status: "pending",
           };
           currentToolCalls.push(toolCall);
-          
+
           events.push({
-            type: 'tool_start',
+            type: "tool_start",
             data: { toolCall },
           });
         }
         break;
 
-      case 'message_stop':
+      case "message_stop":
         // 消息结束
         break;
     }
@@ -283,75 +196,6 @@ export class AgentLoopExecutor {
   }
 
   /**
-   * 执行工具调用
-   */
-  private async executeTools(
-    toolCalls: ToolCall[],
-    context: AgentContext,
-    abortController?: AbortController
-  ): Promise<void> {
-    const toolResults: ClaudeMessage[] = [];
-
-    for (const toolCall of toolCalls) {
-      try {
-        toolCall.status = 'executing';
-        toolCall.startTime = Date.now();
-
-        const executionOptions: ExecutionOptions = {
-          signal: abortController?.signal,
-          timeout: 30000, // 30秒超时
-        };
-
-        const result = await this.toolScheduler.scheduleTool(
-          toolCall.tool as never,
-          toolCall.params,
-          executionOptions
-        );
-
-        toolCall.status = result.success ? 'completed' : 'failed';
-        toolCall.endTime = Date.now();
-        toolCall.result = result;
-
-        if (!result.success) {
-          toolCall.error = result.error;
-        }
-
-        // 格式化工具结果为 Claude 消息
-        const resultMessage = this.claudeClient.formatToolResult(
-          toolCall.id, 
-          result
-        );
-        toolResults.push(resultMessage);
-
-      } catch (error) {
-        toolCall.status = 'failed';
-        toolCall.endTime = Date.now();
-        toolCall.error = error instanceof Error ? error.message : String(error);
-
-        // 格式化错误为 Claude 消息
-        const errorMessage = this.claudeClient.formatToolError(
-          toolCall.id, 
-          error instanceof Error ? error : new Error(String(error))
-        );
-        toolResults.push(errorMessage);
-      }
-    }
-
-    // 将工具结果添加到消息历史
-    const toolResultMessage: Message = {
-      id: this.generateMessageId(),
-      role: 'user',
-      content: toolResults.map(r => r.content ? String(r.content) : '').join('\n'),
-      timestamp: Date.now(),
-      metadata: {
-        tool_calls: toolCalls,
-      },
-    };
-
-    context.messages.push(toolResultMessage);
-  }
-
-  /**
    * 流式执行工具调用
    */
   private async *executeToolsStream(
@@ -361,12 +205,12 @@ export class AgentLoopExecutor {
   ): AsyncGenerator<StreamEvent, void, unknown> {
     for (const toolCall of toolCalls) {
       yield {
-        type: 'tool_start',
+        type: "tool_start",
         data: { toolCall },
       };
 
       try {
-        toolCall.status = 'executing';
+        toolCall.status = "executing";
         toolCall.startTime = Date.now();
 
         const executionOptions: ExecutionOptions = {
@@ -380,7 +224,7 @@ export class AgentLoopExecutor {
           executionOptions
         );
 
-        toolCall.status = result.success ? 'completed' : 'failed';
+        toolCall.status = result.success ? "completed" : "failed";
         toolCall.endTime = Date.now();
         toolCall.result = result;
 
@@ -389,31 +233,33 @@ export class AgentLoopExecutor {
         }
 
         yield {
-          type: 'tool_complete',
+          type: "tool_complete",
           data: { toolCall },
         };
-
       } catch (error) {
-        toolCall.status = 'failed';
+        toolCall.status = "failed";
         toolCall.endTime = Date.now();
         toolCall.error = error instanceof Error ? error.message : String(error);
 
         yield {
-          type: 'error',
-          data: { error: { 
-            code: 'TOOL_ERROR',
-            message: error instanceof Error ? error.message : String(error),
-            timestamp: Date.now(),
-          }},
+          type: "error",
+          data: {
+            error: {
+              code: "TOOL_ERROR",
+              message: error instanceof Error ? error.message : String(error),
+              timestamp: Date.now(),
+            },
+          },
         };
       }
     }
 
-    // 将工具结果添加到消息历史
+    // 🎯 关键修复：将工具结果作为独立的 assistant 消息展示
+    // 这样工具调用结果会按时间顺序出现在对话中
     const toolResultMessage: Message = {
       id: this.generateMessageId(),
-      role: 'user',
-      content: toolCalls.map(tc => tc.result?.output || tc.error || 'No result').join('\n'),
+      role: "assistant", // 改为 assistant 角色
+      content: "工具调用完成", // 简短的提示信息
       timestamp: Date.now(),
       metadata: { tool_calls: toolCalls },
     };
@@ -426,25 +272,27 @@ export class AgentLoopExecutor {
    */
   private buildClaudeMessages(context: AgentContext): ClaudeMessage[] {
     return context.messages
-      .filter(msg => msg.role !== 'system')
-      .map(msg => ({
-        role: msg.role as 'user' | 'assistant',
+      .filter((msg) => msg.role !== "system")
+      .map((msg) => ({
+        role: msg.role as "user" | "assistant",
         content: this.convertMessageContent(msg.content),
       }));
   }
 
-     /**
-    * 转换消息内容格式
-    */
-   private convertMessageContent(content: string | unknown[]): string | ClaudeContent[] {
-    if (typeof content === 'string') {
+  /**
+   * 转换消息内容格式
+   */
+  private convertMessageContent(
+    content: string | unknown[]
+  ): string | ClaudeContent[] {
+    if (typeof content === "string") {
       return content;
     }
 
     if (Array.isArray(content)) {
-      return content.map(item => {
-        if (typeof item === 'string') {
-          return { type: 'text', text: item } as ClaudeContent;
+      return content.map((item) => {
+        if (typeof item === "string") {
+          return { type: "text", text: item } as ClaudeContent;
         }
         return item as ClaudeContent;
       });
@@ -466,4 +314,4 @@ export class AgentLoopExecutor {
   private generateMessageId(): string {
     return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
-} 
+}

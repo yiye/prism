@@ -56,7 +56,19 @@ export class EventConverter {
       data: {
         sessionId,
         timestamp: Date.now(),
-        ...event.data,
+        content: event.data.content,
+        error: event.data.error?.message || event.data.error?.code,
+        toolCall: event.data.toolCall ? {
+          id: event.data.toolCall.id,
+          tool: event.data.toolCall.tool,
+          params: event.data.toolCall.params,
+          status: event.data.toolCall.status,
+          result: event.data.toolCall.result,
+          error: event.data.toolCall.error,
+          startTime: event.data.toolCall.startTime,
+          endTime: event.data.toolCall.endTime,
+        } : undefined,
+        toolStats: event.data.progress ? { progress: event.data.progress } : undefined,
       },
     };
   }

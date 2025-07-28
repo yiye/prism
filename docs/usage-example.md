@@ -7,16 +7,15 @@
 ```javascript
 // 创建 SSE 连接进行流式聊天
 async function startStreamChat(message, sessionId = null) {
-  const response = await fetch('/api/chat', {
-    method: 'POST',
+  const response = await fetch("/api/chat", {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     },
     body: JSON.stringify({
       message,
       sessionId,
       projectPath: process.cwd(),
-      stream: true, // 开启流式
     }),
   });
 
@@ -28,15 +27,15 @@ async function startStreamChat(message, sessionId = null) {
     if (done) break;
 
     const chunk = decoder.decode(value);
-    const lines = chunk.split('\n');
+    const lines = chunk.split("\n");
 
     for (const line of lines) {
-      if (line.startsWith('data: ')) {
+      if (line.startsWith("data: ")) {
         try {
           const event = JSON.parse(line.slice(6));
           handleSSEEvent(event);
         } catch (e) {
-          console.log('Parse error:', e);
+          console.log("Parse error:", e);
         }
       }
     }
@@ -46,142 +45,101 @@ async function startStreamChat(message, sessionId = null) {
 // 处理 SSE 事件
 function handleSSEEvent(event) {
   switch (event.type) {
-    case 'connected':
-      console.log('🔗 Connected to session:', event.data.sessionId);
+    case "connected":
+      console.log("🔗 Connected to session:", event.data.sessionId);
       break;
-      
-    case 'thinking':
-      console.log('🤔 Agent is thinking:', event.data.content);
+
+    case "thinking":
+      console.log("🤔 Agent is thinking:", event.data.content);
       break;
-      
-    case 'tool_start':
-      console.log('🔧 Tool started:', event.data.toolCall.tool);
+
+    case "tool_start":
+      console.log("🔧 Tool started:", event.data.toolCall.tool);
       break;
-      
-    case 'tool_complete':
-      console.log('✅ Tool completed:', event.data.toolCall);
+
+    case "tool_complete":
+      console.log("✅ Tool completed:", event.data.toolCall);
       break;
-      
-    case 'response':
-      console.log('💬 Response:', event.data.content);
+
+    case "response":
+      console.log("💬 Response:", event.data.content);
       break;
-      
-    case 'complete':
-      console.log('🎉 Processing complete');
+
+    case "complete":
+      console.log("🎉 Processing complete");
       break;
-      
-    case 'error':
-      console.error('❌ Error:', event.data.error);
+
+    case "error":
+      console.error("❌ Error:", event.data.error);
       break;
   }
 }
 
 // 使用示例
-startStreamChat('请帮我审查这个文件的代码质量');
+startStreamChat("请帮我审查这个文件的代码质量");
 ```
 
-### 2. 非流式聊天
-
-```javascript
-// 简单的非流式聊天
-async function simpleChat(message, sessionId = null) {
-  const response = await fetch('/api/chat', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      message,
-      sessionId,
-      projectPath: '/path/to/project',
-      userMemory: '用户喜欢详细的代码分析',
-      customInstructions: '请用中文回复',
-      stream: false, // 非流式
-    }),
-  });
-
-  const result = await response.json();
-  
-  if (result.success) {
-    console.log('Session ID:', result.sessionId);
-    console.log('Response:', result.data.content);
-    console.log('Tool calls:', result.data.toolCalls);
-    
-    return result.sessionId; // 返回会话ID供后续使用
-  } else {
-    console.error('Error:', result.error);
-  }
-}
-
-// 继续对话示例
-async function continueConversation() {
-  // 第一轮对话
-  const sessionId = await simpleChat('请分析这个项目的架构');
-  
-  // 第二轮对话（复用会话）
-  await simpleChat('请给出改进建议', sessionId);
-}
-```
-
-## React 组件示例
+### 2. React 组件示例
 
 ```jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 
 const AgentChat = () => {
   const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState(null);
   const [isStreaming, setIsStreaming] = useState(false);
 
   const sendMessage = async (message) => {
     setIsStreaming(true);
-    setMessages(prev => [...prev, { type: 'user', content: message }]);
+    setMessages((prev) => [...prev, { type: "user", content: message }]);
 
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message,
           sessionId,
-          stream: true,
         }),
       });
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      let assistantMessage = '';
+      let assistantMessage = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
+        const lines = chunk.split("\n");
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
+          if (line.startsWith("data: ")) {
             try {
               const event = JSON.parse(line.slice(6));
-              
-              if (event.type === 'connected') {
+
+              if (event.type === "connected") {
                 setSessionId(event.data.sessionId);
-              } else if (event.type === 'response') {
+              } else if (event.type === "response") {
                 assistantMessage = event.data.content;
-                setMessages(prev => {
+                setMessages((prev) => {
                   const newMessages = [...prev];
                   const lastIndex = newMessages.length - 1;
-                  if (newMessages[lastIndex]?.type === 'assistant') {
+                  if (newMessages[lastIndex]?.type === "assistant") {
                     newMessages[lastIndex].content = assistantMessage;
                   } else {
-                    newMessages.push({ type: 'assistant', content: assistantMessage });
+                    newMessages.push({
+                      type: "assistant",
+                      content: assistantMessage,
+                    });
                   }
                   return newMessages;
                 });
               }
             } catch (e) {
-              console.error('Parse error:', e);
+              console.error("Parse error:", e);
             }
           }
         }
@@ -192,47 +150,40 @@ const AgentChat = () => {
   };
 
   return (
-    <div className="chat-container">
+    <div>
       <div className="messages">
-        {messages.map((msg, index) => (
-          <div key={index} className={`message ${msg.type}`}>
-            <strong>{msg.type === 'user' ? 'You' : 'Agent'}:</strong>
-            <p>{msg.content}</p>
+        {messages.map((msg, i) => (
+          <div key={i} className={`message ${msg.type}`}>
+            {msg.content}
           </div>
         ))}
-        {isStreaming && <div className="loading">Agent is thinking...</div>}
       </div>
-      
+
       <div className="input-area">
         <input
-          type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyPress={(e) => {
-            if (e.key === 'Enter' && !isStreaming) {
+            if (e.key === "Enter" && !isStreaming) {
               sendMessage(input);
-              setInput('');
+              setInput("");
             }
           }}
-          placeholder="输入你的消息..."
+          placeholder="输入你的问题..."
           disabled={isStreaming}
         />
-        <button 
+        <button
           onClick={() => {
-            sendMessage(input);
-            setInput('');
+            if (!isStreaming) {
+              sendMessage(input);
+              setInput("");
+            }
           }}
           disabled={isStreaming}
         >
-          发送
+          {isStreaming ? "处理中..." : "发送"}
         </button>
       </div>
-      
-      {sessionId && (
-        <div className="session-info">
-          Session: {sessionId}
-        </div>
-      )}
     </div>
   );
 };
@@ -240,42 +191,55 @@ const AgentChat = () => {
 export default AgentChat;
 ```
 
-## Node.js 服务端示例
+## API 接口说明
 
-```javascript
-// 直接使用 AgentService
-import { getGlobalAgentService } from './lib/services/agent';
+### POST /api/chat
 
-async function testAgentService() {
-  const agentService = getGlobalAgentService({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-  });
+**请求参数：**
 
-  // 创建会话
-  const sessionResponse = await agentService.createOrGetSession({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-    projectPath: process.cwd(),
-    userMemory: '这是一个 Next.js 项目',
-  });
-
-  if (sessionResponse.success) {
-    const sessionId = sessionResponse.sessionId;
-    
-    // 处理消息
-    const response = await agentService.processMessage(
-      sessionId,
-      '请分析这个项目的代码结构'
-    );
-    
-    console.log(response.data.content);
-  }
+```json
+{
+  "message": "请帮我审查这个文件的代码质量",
+  "sessionId": "可选的会话ID",
+  "projectPath": "项目路径，默认为当前工作目录",
+  "userMemory": "用户记忆信息",
+  "customInstructions": "自定义指令"
 }
+```
 
-// 健康检查
-async function healthCheck() {
-  const agentService = getGlobalAgentService();
-  const health = await agentService.healthCheck();
-  console.log('Health:', health);
+**响应：**
+
+- 返回 SSE (Server-Sent Events) 流
+- Content-Type: `text/event-stream`
+
+**SSE 事件类型：**
+
+- `connected`: 连接建立
+- `thinking`: Agent 思考中
+- `tool_start`: 工具开始执行
+- `tool_complete`: 工具执行完成
+- `response`: 响应内容
+- `complete`: 处理完成
+- `error`: 错误信息
+
+### GET /api/chat
+
+**健康检查接口**
+
+**响应：**
+
+```json
+{
+  "status": "healthy|degraded|unhealthy",
+  "timestamp": "2024-01-01T00:00:00.000Z",
+  "details": {
+    "config": {
+      /* 配置检查结果 */
+    },
+    "service": {
+      /* 服务检查结果 */
+    }
+  }
 }
 ```
 
@@ -317,4 +281,4 @@ curl -X POST http://localhost:3000/api/chat \
 
 ---
 
-*Happy Coding! 🌟* 
+_Happy Coding! 🌟_

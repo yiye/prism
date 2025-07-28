@@ -62,8 +62,7 @@ export class ErrorHandler {
    * 包装异步操作并提供统一错误处理
    */
   static async wrapAsync<T>(
-    operation: () => Promise<T>,
-    errorMessage: string
+    operation: () => Promise<T>
   ): Promise<T> {
     try {
       return await operation();

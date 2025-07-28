@@ -8,8 +8,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 // 配置文件路径
-export const PRISM_CONFIG_DIR = path.join(os.homedir(), '.prism');
-export const PRISM_CONFIG_FILE = path.join(PRISM_CONFIG_DIR, 'config.json');
+export const PRISM_CONFIG_DIR = path.join(os.homedir());
+export const PRISM_CONFIG_FILE = path.join(PRISM_CONFIG_DIR, '.prism-config.json');
 
 // 简化的 Claude 配置，只保留 apiKey 和 baseUrl
 export interface ClaudeConfig {
@@ -19,8 +19,8 @@ export interface ClaudeConfig {
 
 // 固定的默认配置
 export const FIXED_AGENT_CONFIG = {
-  model: 'claude-3-5-sonnet-20241022',
-  maxTokens: 4096,
+  model: 'claude_sonnet4',
+  maxTokens: 16000,
   temperature: 0.7,
   sessionTimeout: 30 * 60 * 1000, // 30分钟
   maxSessions: 50,

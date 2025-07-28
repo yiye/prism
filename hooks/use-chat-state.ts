@@ -4,15 +4,12 @@
  * 分离状态管理逻辑，提高组件可维护性
  */
 
-import {
-  useCallback,
-  useState,
-} from 'react';
+import { useCallback, useState } from "react";
 
 // Types
 export interface Message {
   id: string;
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string;
   timestamp: number;
   isStreaming?: boolean;
@@ -31,7 +28,7 @@ export interface Message {
 export interface ToolCall {
   id: string;
   name: string;
-  status: 'running' | 'complete' | 'error';
+  status: "running" | "complete" | "error";
   input?: Record<string, unknown>;
   output?: string;
   error?: string;
@@ -45,21 +42,26 @@ export interface StreamingMessage {
 // Hook
 export function useChatState(initialSessionId?: string) {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [inputValue, setInputValue] = useState('');
+  const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState(initialSessionId);
   const [error, setError] = useState<string | null>(null);
-  const [streamingMessage, setStreamingMessage] = useState<StreamingMessage | null>(null);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [streamingMessage, setStreamingMessage] =
+    useState<StreamingMessage | null>(null);
+  const [abortController, setAbortController] =
+    useState<AbortController | null>(null);
 
   // Actions
   const addMessage = useCallback((message: Message) => {
-    setMessages(prev => [...prev, message]);
+    setMessages((prev) => [...prev, message]);
   }, []);
 
-  const updateStreamingMessage = useCallback((updater: (prev: StreamingMessage | null) => StreamingMessage | null) => {
-    setStreamingMessage(updater);
-  }, []);
+  const updateStreamingMessage = useCallback(
+    (updater: (prev: StreamingMessage | null) => StreamingMessage | null) => {
+      setStreamingMessage(updater);
+    },
+    []
+  );
 
   const clearChat = useCallback(() => {
     setMessages([]);
@@ -75,7 +77,7 @@ export function useChatState(initialSessionId?: string) {
   const startLoading = useCallback(() => {
     setIsLoading(true);
     setError(null);
-    setStreamingMessage({ content: '', toolCalls: new Map() });
+    setStreamingMessage({ content: "", toolCalls: new Map() });
   }, []);
 
   const stopLoading = useCallback(() => {
@@ -88,11 +90,16 @@ export function useChatState(initialSessionId?: string) {
   }, []);
 
   const finalizeStreamingMessage = useCallback(() => {
-    if (streamingMessage && (streamingMessage.content || streamingMessage.toolCalls.size > 0)) {
+    // 只有在没有通过 complete 事件处理的情况下才处理流式消息
+    if (
+      streamingMessage &&
+      streamingMessage.content && // 确保有内容才处理
+      !streamingMessage.content.trim().endsWith("") // 避免空内容
+    ) {
       const finalMessage: Message = {
         id: `assistant_${Date.now()}`,
-        role: 'assistant',
-        content: streamingMessage.content || 'Task completed',
+        role: "assistant",
+        content: streamingMessage.content,
         timestamp: Date.now(),
         toolCalls: Array.from(streamingMessage.toolCalls.values()),
       };
@@ -110,7 +117,7 @@ export function useChatState(initialSessionId?: string) {
     error,
     streamingMessage,
     abortController,
-    
+
     // Actions
     setInputValue,
     setError,
@@ -123,4 +130,4 @@ export function useChatState(initialSessionId?: string) {
     setLoadingController,
     finalizeStreamingMessage,
   };
-} 
+}

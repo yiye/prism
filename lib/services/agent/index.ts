@@ -4,24 +4,15 @@
  * 重构后架构：提供 route.ts 需要的统一 API
  */
 
-import type {
-  AgentOptions,
-  StreamEvent,
-} from '@/types';
+import type { AgentOptions, StreamEvent } from "@/types";
 
-import { FIXED_AGENT_CONFIG } from '../../config/agent-config';
-import {
-  CodeReviewAgent,
-  createCodeReviewAgent,
-} from './core/agent';
-import { buildContextualPrompt } from './prompt';
+import { FIXED_AGENT_CONFIG } from "../../config/agent-config";
+import { CodeReviewAgent, createCodeReviewAgent } from "./core/agent";
+import { buildContextualPrompt } from "./prompt";
 // Tool System Imports
-import { createEnhancedCodeReviewToolRegistry } from './tools/tool-registry';
-import { createDefaultToolScheduler } from './tools/tool-scheduler';
-import {
-  IdGenerator,
-  TimeUtils,
-} from './utils/agent-utils';
+import { createEnhancedCodeReviewToolRegistry } from "./tools/tool-registry";
+import { createDefaultToolScheduler } from "./tools/tool-scheduler";
+import { IdGenerator, TimeUtils } from "./utils/agent-utils";
 
 // === 会话管理相关类型 ===
 export interface SessionConfig {
@@ -44,7 +35,15 @@ export interface AgentSession {
 }
 
 export interface SSEEvent {
-  type: 'connected' | 'thinking' | 'tool_start' | 'tool_progress' | 'tool_complete' | 'response' | 'complete' | 'error';
+  type:
+    | "connected"
+    | "thinking"
+    | "tool_start"
+    | "tool_progress"
+    | "tool_complete"
+    | "response"
+    | "complete"
+    | "error";
   data: Record<string, unknown>;
 }
 
@@ -56,20 +55,11 @@ export interface ServiceResponse<T = unknown> {
   sessionId?: string;
 }
 
-export interface ProcessMessageResponse {
-  content: string;
-  toolCalls: Record<string, unknown>[];
-  metadata: {
-    model: string;
-    tokensUsed: number;
-  };
-}
-
 export interface HealthCheckResponse {
-  status: 'healthy' | 'degraded' | 'unhealthy';
+  status: "healthy" | "degraded" | "unhealthy";
   checks: Array<{
     name: string;
-    status: 'ok' | 'warning' | 'error';
+    status: "ok" | "warning" | "error";
     message: string;
   }>;
 }
@@ -117,7 +107,11 @@ class SessionManager {
         maxTurns: 50,
       };
 
-      const agent = createCodeReviewAgent(agentOptions, toolRegistry, toolScheduler);
+      const agent = createCodeReviewAgent(
+        agentOptions,
+        toolRegistry,
+        toolScheduler
+      );
 
       // 创建会话对象
       const session: AgentSession = {
@@ -134,10 +128,13 @@ class SessionManager {
 
       console.log(`📅 Created agent session: ${sessionId} with ToolScheduler`);
       return sessionId;
-
     } catch (error) {
-      console.error('Failed to create agent session:', error);
-      throw new Error(`Failed to create agent session: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error("Failed to create agent session:", error);
+      throw new Error(
+        `Failed to create agent session: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   }
 
@@ -155,7 +152,10 @@ class SessionManager {
   /**
    * 设置 SSE 控制器
    */
-  setSSEController(sessionId: string, controller: ReadableStreamDefaultController): void {
+  setSSEController(
+    sessionId: string,
+    controller: ReadableStreamDefaultController
+  ): void {
     const session = this.sessions.get(sessionId);
     if (session) {
       session.sseController = controller;
@@ -177,16 +177,19 @@ class SessionManager {
     if (session) {
       // 取消正在进行的操作
       session.agent.cancel();
-      
+
       // 关闭 SSE 连接
       if (session.sseController) {
         try {
           session.sseController.close();
         } catch (error) {
-          console.warn(`Failed to close SSE controller for session ${sessionId}:`, error);
+          console.warn(
+            `Failed to close SSE controller for session ${sessionId}:`,
+            error
+          );
         }
       }
-      
+
       this.sessions.delete(sessionId);
       console.log(`🗑️ Deleted session: ${sessionId}`);
       return true;
@@ -199,7 +202,7 @@ class SessionManager {
    */
   private cleanupExpiredSessions(): void {
     const sessionTimeout = FIXED_AGENT_CONFIG.sessionTimeout;
-    
+
     for (const [sessionId, session] of this.sessions) {
       if (TimeUtils.isExpired(session.lastActivity, sessionTimeout)) {
         console.log(`🧹 Cleaning up expired session: ${sessionId}`);
@@ -222,7 +225,7 @@ class SessionManager {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
     }
-    
+
     for (const sessionId of this.sessions.keys()) {
       this.deleteSession(sessionId);
     }
@@ -244,7 +247,7 @@ export class AgentService {
    * 创建或获取会话 - route.ts 使用的 API
    */
   async createOrGetSession(
-    config: SessionConfig, 
+    config: SessionConfig,
     existingSessionId?: string
   ): Promise<ServiceResponse<{ sessionId: string }>> {
     try {
@@ -255,7 +258,7 @@ export class AgentService {
           return {
             success: true,
             sessionId: existingSessionId,
-            data: { sessionId: existingSessionId }
+            data: { sessionId: existingSessionId },
           };
         }
       }
@@ -265,71 +268,13 @@ export class AgentService {
       return {
         success: true,
         sessionId,
-        data: { sessionId }
+        data: { sessionId },
       };
-
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to create session'
-      };
-    }
-  }
-
-  /**
-   * 处理单条消息 - route.ts 使用的 API
-   */
-  async processMessage(
-    sessionId: string, 
-    message: string
-  ): Promise<ServiceResponse<ProcessMessageResponse>> {
-    const session = this.sessionManager.getSession(sessionId);
-    if (!session) {
-      return {
-        success: false,
-        error: 'Session not found'
-      };
-    }
-
-    try {
-      // 收集流式响应为单个结果
-      let finalContent = '';
-      const toolCalls: Record<string, unknown>[] = [];
-      let tokensUsed = 0;
-
-      const agentStream = session.agent.processMessageStream(message);
-      
-      for await (const event of agentStream) {
-        if (event.type === 'response' && event.data.content) {
-          finalContent += event.data.content;
-        }
-        if (event.type === 'tool_complete' && event.data.toolCall) {
-          toolCalls.push(event.data.toolCall as unknown as Record<string, unknown>);
-        }
-        if (event.type === 'complete') {
-          // 获取最终统计信息
-          const stats = session.agent.getToolStats();
-          tokensUsed = stats.totalTools; // 暂时用工具数量代替
-          break;
-        }
-      }
-
-      return {
-        success: true,
-        data: {
-          content: finalContent || 'Response completed',
-          toolCalls,
-          metadata: {
-            model: FIXED_AGENT_CONFIG.model,
-            tokensUsed
-          }
-        }
-      };
-
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to process message'
+        error:
+          error instanceof Error ? error.message : "Failed to create session",
       };
     }
   }
@@ -344,8 +289,8 @@ export class AgentService {
     const session = this.sessionManager.getSession(sessionId);
     if (!session) {
       yield {
-        type: 'error',
-        data: { error: 'Session not found', sessionId },
+        type: "error",
+        data: { error: "Session not found", sessionId },
       };
       return;
     }
@@ -353,38 +298,23 @@ export class AgentService {
     try {
       // 发送连接事件
       yield {
-        type: 'connected',
+        type: "connected",
         data: { sessionId, timestamp: TimeUtils.now() },
       };
 
       // 获取 Agent 流式响应
       const agentStream = session.agent.processMessageStream(message);
-      
+
       for await (const event of agentStream) {
         // 转换 Agent 事件为 SSE 事件
         const sseEvent = this.convertAgentEventToSSE(event, sessionId);
         yield sseEvent;
-        
-        // 如果是完成事件，添加最终状态
-        if (event.type === 'complete') {
-          yield {
-            type: 'complete',
-            data: { 
-              sessionId, 
-              timestamp: TimeUtils.now(),
-              toolStats: session.agent.getToolStats(),
-            },
-          };
-          break;
-        }
       }
-
     } catch (error) {
-      console.error(`Error in session ${sessionId}:`, error);
       yield {
-        type: 'error',
+        type: "error",
         data: {
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: error instanceof Error ? error.message : "Unknown error",
           sessionId,
         },
       };
@@ -406,14 +336,14 @@ export class AgentService {
    */
   async healthCheck(): Promise<HealthCheckResponse> {
     const checks = [];
-    let overallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
+    let overallStatus: "healthy" | "degraded" | "unhealthy" = "healthy";
 
     // 检查会话管理器状态
     const activeSessions = this.sessionManager.getActiveSessions().length;
     checks.push({
-      name: 'session_manager',
-      status: 'ok' as const,
-      message: `${activeSessions} active sessions`
+      name: "session_manager",
+      status: "ok" as const,
+      message: `${activeSessions} active sessions`,
     });
 
     // 检查工具注册表状态
@@ -421,31 +351,36 @@ export class AgentService {
       const toolRegistry = createEnhancedCodeReviewToolRegistry(process.cwd());
       const toolCount = toolRegistry.list().length;
       checks.push({
-        name: 'tool_registry',
-        status: 'ok' as const,
-        message: `${toolCount} tools registered`
+        name: "tool_registry",
+        status: "ok" as const,
+        message: `${toolCount} tools registered`,
       });
     } catch (error) {
-      overallStatus = 'degraded';
+      overallStatus = "degraded";
       checks.push({
-        name: 'tool_registry',
-        status: 'warning' as const,
-        message: `Tool registry warning: ${error instanceof Error ? error.message : 'Unknown error'}`
+        name: "tool_registry",
+        status: "warning" as const,
+        message: `Tool registry warning: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
       });
     }
 
     return {
       status: overallStatus,
-      checks
+      checks,
     };
   }
 
   /**
    * 转换 Agent 事件为 SSE 事件
    */
-  private convertAgentEventToSSE(event: StreamEvent, sessionId: string): SSEEvent {
+  private convertAgentEventToSSE(
+    event: StreamEvent,
+    sessionId: string
+  ): SSEEvent {
     return {
-      type: event.type as SSEEvent['type'],
+      type: event.type as SSEEvent["type"],
       data: {
         ...event.data,
         sessionId,
@@ -459,7 +394,7 @@ export class AgentService {
    */
   shutdown(): void {
     this.sessionManager.shutdown();
-    console.log('🔌 Agent Service shutdown complete');
+    console.log("🔌 Agent Service shutdown complete");
   }
 }
 
