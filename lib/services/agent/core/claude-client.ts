@@ -6,13 +6,17 @@
 
 import {
   AgentError,
+  ClaudeContent,
   ClaudeMessage,
   ClaudeResponse,
   ClaudeStreamEvent,
+  Message,
+  MessageContent,
   Tool,
-  ToolResult,
+  ToolCall,
 } from "@/types";
 import Anthropic from "@anthropic-ai/sdk";
+import { IdGenerator } from "../utils/agent-utils";
 
 export interface ClaudeConfig {
   apiKey: string;
@@ -81,7 +85,6 @@ export class ClaudeClient {
 
       // 处理流式响应
       for await (const chunk of stream) {
-        console.log("chunk", chunk);
         const event = this.convertChunkToEvent(chunk);
         if (event) {
           yield event;
@@ -207,36 +210,46 @@ export class ClaudeClient {
   }
 
   /**
-   * 验证工具调用结果并转换为 Claude 格式
+   * 将工具调用结果转换为 Claude 消息格式
    */
-  formatToolResult(toolCallId: string, result: ToolResult): ClaudeMessage {
-    return {
-      role: "user",
-      content: [
-        {
+  convertToolCallToUserMessage(toolCalls: ToolCall[]): Message {
+    const toolResults: ClaudeContent[] = [];
+
+    for (const toolCall of toolCalls) {
+      if (toolCall.status === "completed" && toolCall.result) {
+        // 成功的结果
+        toolResults.push({
           type: "tool_result",
-          id: toolCallId,
-          content: result.output,
+          tool_use_id: toolCall.id,
+          content: toolCall.result.output,
           is_error: false,
-        },
-      ],
+        });
+      } else if (toolCall.status === "failed") {
+        // 失败的结果
+        const errorMessage = toolCall.error || "Tool execution failed";
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: toolCall.id,
+          content: `Error: ${errorMessage}`,
+          is_error: true,
+        });
+      }
+    }
+
+    return {
+      id: IdGenerator.generateToolResultId(),
+      role: "user",
+      content: toolResults as string | MessageContent[],
+      timestamp: Date.now(),
     };
   }
 
-  /**
-   * 格式化工具调用错误
-   */
-  formatToolError(toolCallId: string, error: Error): ClaudeMessage {
+  buildAssistantMessage(content: string): Message {
     return {
-      role: "user",
-      content: [
-        {
-          type: "tool_result",
-          id: toolCallId,
-          content: `Error: ${error.message}`,
-          is_error: true,
-        },
-      ],
+      id: IdGenerator.generateMessageId(),
+      role: "assistant",
+      content,
+      timestamp: Date.now(),
     };
   }
 

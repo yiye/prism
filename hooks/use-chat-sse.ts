@@ -6,7 +6,7 @@
 
 import { useCallback } from "react";
 
-import type { Message, StreamingMessage } from "./use-chat-state";
+import type { Message, StreamingMessage, ToolCall } from "./use-chat-state";
 
 // SSE Event Types
 export interface SSEEvent {
@@ -71,26 +71,99 @@ export function useChatSSE({
 
         case "thinking":
           updateStreamingMessage(
-            (prev) => prev || { content: "", toolCalls: new Map() }
+            (prev) =>
+              prev || {
+                content: "",
+                toolCalls: new Map(),
+                segments: [],
+              }
           );
+          break;
+
+        case "response":
+          if (event.data.content && typeof event.data.content === "string") {
+            updateStreamingMessage((prev) => {
+              if (!prev) {
+                return {
+                  content: event.data.content as string,
+                  toolCalls: new Map(),
+                  segments: [
+                    {
+                      id: `claude_${Date.now()}`,
+                      type: "claude_response",
+                      content: event.data.content as string,
+                      timestamp: Date.now(),
+                    },
+                  ],
+                };
+              }
+              // 累积增量内容，实现打字机效果
+              const newContent = prev.content + event.data.content;
+
+              // 更新最后一个 Claude 响应分段，或创建新的分段
+              const newSegments = [...prev.segments];
+              const lastSegment = newSegments[newSegments.length - 1];
+
+              if (lastSegment && lastSegment.type === "claude_response") {
+                // 更新现有分段
+                lastSegment.content = newContent;
+              } else {
+                // 创建新的 Claude 响应分段
+                newSegments.push({
+                  id: `claude_${Date.now()}`,
+                  type: "claude_response",
+                  content: event.data.content as string,
+                  timestamp: Date.now(),
+                });
+              }
+
+              return {
+                ...prev,
+                content: newContent,
+                segments: newSegments,
+              };
+            });
+          }
           break;
 
         case "tool_start":
           if (event.data.toolCall) {
             updateStreamingMessage((prev) => {
-              if (!prev) return { content: "", toolCalls: new Map() };
+              if (!prev)
+                return {
+                  content: "",
+                  toolCalls: new Map(),
+                  segments: [],
+                };
+
               const newToolCalls = new Map(prev.toolCalls);
               const toolName =
                 event.data.toolCall!.name ||
                 event.data.toolCall!.tool ||
                 "unknown";
-              newToolCalls.set(event.data.toolCall!.id, {
+              const toolCall: ToolCall = {
                 id: event.data.toolCall!.id,
                 name: toolName,
                 status: "running" as const,
                 input: event.data.toolCall!.params || {},
+              };
+
+              newToolCalls.set(event.data.toolCall!.id, toolCall);
+
+              // 添加工具调用分段
+              const newSegments = [...prev.segments];
+              newSegments.push({
+                id: `tool_${event.data.toolCall!.id}`,
+                type: "tool_call",
+                toolCall: toolCall,
+                timestamp: Date.now(),
               });
-              return { ...prev, toolCalls: newToolCalls };
+
+              return {
+                ...prev,
+                toolCalls: newToolCalls,
+                segments: newSegments,
+              };
             });
           }
           break;
@@ -98,7 +171,13 @@ export function useChatSSE({
         case "tool_complete":
           if (event.data.toolCall) {
             updateStreamingMessage((prev) => {
-              if (!prev) return { content: "", toolCalls: new Map() };
+              if (!prev)
+                return {
+                  content: "",
+                  toolCalls: new Map(),
+                  segments: [],
+                };
+
               const newToolCalls = new Map(prev.toolCalls);
               const existingTool = newToolCalls.get(event.data.toolCall!.id);
 
@@ -111,7 +190,7 @@ export function useChatSSE({
                 event.data.toolCall!.tool ||
                 "unknown";
 
-              newToolCalls.set(event.data.toolCall!.id, {
+              const updatedToolCall: ToolCall = {
                 ...existingTool,
                 id: event.data.toolCall!.id,
                 name: toolName,
@@ -119,22 +198,42 @@ export function useChatSSE({
                 output: output,
                 error: error,
                 input: event.data.toolCall!.params || existingTool?.input || {},
-              });
-              return { ...prev, toolCalls: newToolCalls };
-            });
-          }
-          break;
+              };
 
-        case "response":
-          if (event.data.content && typeof event.data.content === "string") {
-            updateStreamingMessage((prev) => {
-              if (!prev)
-                return {
-                  content: event.data.content as string,
-                  toolCalls: new Map(),
+              newToolCalls.set(event.data.toolCall!.id, updatedToolCall);
+
+              // 🎯 关键修复：更新现有工具调用分段，而不是创建新分段
+              const newSegments = [...prev.segments];
+              const toolSegmentIndex = newSegments.findIndex(
+                (seg) =>
+                  seg.type === "tool_call" &&
+                  seg.toolCall?.id === event.data.toolCall!.id
+              );
+
+              if (toolSegmentIndex !== -1) {
+                // 🎯 更新现有分段的状态，保持相同的ID
+                newSegments[toolSegmentIndex] = {
+                  ...newSegments[toolSegmentIndex],
+                  toolCall: updatedToolCall,
                 };
-              // 累积增量内容，实现打字机效果
-              return { ...prev, content: prev.content + event.data.content };
+              } else {
+                // 🎯 如果没找到现有分段，创建新的分段（这种情况不应该发生，但为了健壮性）
+                console.warn(
+                  `Tool segment not found for ID: ${event.data.toolCall!.id}`
+                );
+                newSegments.push({
+                  id: `tool_${event.data.toolCall!.id}`,
+                  type: "tool_call",
+                  toolCall: updatedToolCall,
+                  timestamp: Date.now(),
+                });
+              }
+
+              return {
+                ...prev,
+                toolCalls: newToolCalls,
+                segments: newSegments,
+              };
             });
           }
           break;
@@ -153,20 +252,22 @@ export function useChatSSE({
           break;
 
         case "error":
-          setError(
-            typeof event.data.error === "string"
-              ? event.data.error
-              : "Unknown streaming error"
-          );
+          if (event.data.error) {
+            setError(event.data.error as string);
+          }
           break;
+
+        default:
+          console.log("Unknown SSE event type:", event.type);
       }
     },
     [
       currentSessionId,
       onSessionChange,
+      updateSessionId,
       updateStreamingMessage,
       setError,
-      updateSessionId,
+      addMessage,
     ]
   );
 

@@ -8,4 +8,5 @@ export { ChatHeader } from "./chat-header";
 export { ChatInput } from "./chat-input";
 export { ChatInterface } from "./chat-interface";
 export { ChatMessage } from "./chat-message";
+export { StreamingMessage } from "./streaming-message";
 export { ToolCallTimeline } from "./tool-call-timeline";

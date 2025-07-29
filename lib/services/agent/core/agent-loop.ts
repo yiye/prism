@@ -8,7 +8,6 @@ import {
   ClaudeContent,
   ClaudeMessage,
   ClaudeStreamEvent,
-  Message,
   StreamEvent,
   ToolCall,
 } from "@/types";
@@ -62,6 +61,7 @@ export class AgentLoopExecutor {
         let accumulatedContent = "";
         let pendingToolCalls: ToolCall[] = [];
 
+        console.log(`turn ${attempts + 1}, content: \n`);
         for await (const event of responseStream) {
           if (abortController?.signal.aborted) {
             return;
@@ -75,39 +75,73 @@ export class AgentLoopExecutor {
 
           if (streamResult.events) {
             for (const streamEvent of streamResult.events) {
-              yield streamEvent;
+              if (streamEvent.type === "response") {
+                console.log(streamEvent.data.content);
+              } else {
+                console.log(streamEvent);
+              }
+              // tool_start 的消息在 executeToolsStream 中返回，不需要在这里返回
+              if (streamEvent.type !== "tool_start") {
+                yield streamEvent;
+              }
             }
           }
 
           accumulatedContent = streamResult.content;
           pendingToolCalls = streamResult.toolCalls;
         }
-
+        console.log(
+          `turn ${attempts + 1} , accumulatedContent: \n ${accumulatedContent}`
+        );
+        console.log(
+          `turn ${attempts + 1} , pendingToolCalls: \n ${pendingToolCalls.map(
+            (toolCall) => toolCall.tool
+          )}`
+        );
         // 🎯 关键修复：保存 Claude 的响应内容到 context
         if (accumulatedContent.trim()) {
-          const assistantMessage: Message = {
-            id: this.generateMessageId(),
-            role: "assistant",
-            content: accumulatedContent,
-            timestamp: Date.now(),
-          };
+          const assistantMessage =
+            this.claudeClient.buildAssistantMessage(accumulatedContent);
           context.messages.push(assistantMessage);
         }
 
         // 如果有工具调用，执行它们
         if (pendingToolCalls.length > 0) {
-          yield* this.executeToolsStream(
+          // 🎯 使用 for await 来同时处理流式事件和收集结果
+          const toolStream = this.executeToolsStream(
             pendingToolCalls,
-            context,
             abortController
           );
 
-          // 🎯 关键修复：工具执行后继续下一轮循环
+          const completedToolCalls: ToolCall[] = [];
+          for await (const event of toolStream) {
+            if (
+              event.type === "tool_complete" &&
+              event.data.toolCall &&
+              event.data.toolCall.status === "completed"
+            ) {
+              completedToolCalls.push(event.data.toolCall);
+            }
+            // 处理流式事件（给UI）
+            yield event;
+          }
+
+          if (completedToolCalls.length > 0) {
+            const userMessage =
+              this.claudeClient.convertToolCallToUserMessage(
+                completedToolCalls
+              );
+
+            // 添加到 context 中，这样下一轮循环时会被包含在 buildClaudeMessages 中
+            context.messages.push(userMessage);
+          }
+
+          // 工具执行后继续下一轮循环
           attempts++;
           continue;
         }
 
-        // 🎯 关键修复：如果没有工具调用且有内容，返回最终响应
+        // 如果没有工具调用且有内容，返回最终响应
         if (pendingToolCalls.length === 0 && accumulatedContent.trim()) {
           yield {
             type: "complete",
@@ -116,7 +150,6 @@ export class AgentLoopExecutor {
           return;
         }
 
-        // 🎯 关键修复：如果既没有工具调用也没有内容，可能是错误情况
         if (pendingToolCalls.length === 0 && !accumulatedContent.trim()) {
           console.warn(
             `Turn ${attempts + 1}: No content or tool calls generated`
@@ -124,7 +157,6 @@ export class AgentLoopExecutor {
           attempts++;
           continue;
         }
-
         attempts++;
       } catch (error) {
         if (attempts >= context.state.maxTurns - 1) {
@@ -200,7 +232,6 @@ export class AgentLoopExecutor {
    */
   private async *executeToolsStream(
     toolCalls: ToolCall[],
-    context: AgentContext,
     abortController?: AbortController
   ): AsyncGenerator<StreamEvent, void, unknown> {
     for (const toolCall of toolCalls) {
@@ -253,18 +284,6 @@ export class AgentLoopExecutor {
         };
       }
     }
-
-    // 🎯 关键修复：将工具结果作为独立的 assistant 消息展示
-    // 这样工具调用结果会按时间顺序出现在对话中
-    const toolResultMessage: Message = {
-      id: this.generateMessageId(),
-      role: "assistant", // 改为 assistant 角色
-      content: "工具调用完成", // 简短的提示信息
-      timestamp: Date.now(),
-      metadata: { tool_calls: toolCalls },
-    };
-
-    context.messages.push(toolResultMessage);
   }
 
   /**
@@ -306,12 +325,5 @@ export class AgentLoopExecutor {
    */
   private getAvailableTools() {
     return this.toolRegistry.list();
-  }
-
-  /**
-   * 生成消息 ID
-   */
-  private generateMessageId(): string {
-    return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 }

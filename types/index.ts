@@ -1,14 +1,14 @@
 // Core Agent Types - 基于 qwen-code 架构设计
 export interface Message {
   id: string;
-  role: 'user' | 'assistant' | 'system';
+  role: "user" | "assistant" | "system";
   content: string | MessageContent[];
   timestamp: number;
   metadata?: MessageMetadata;
 }
 
 export interface MessageContent {
-  type: 'text' | 'code' | 'file_reference' | 'tool_result';
+  type: "text" | "code" | "file_reference" | "tool_result";
   text?: string;
   code?: CodeBlock;
   file_reference?: FileReference;
@@ -25,7 +25,7 @@ export interface CodeBlock {
 
 export interface FileReference {
   path: string;
-  type: 'file' | 'directory';
+  type: "file" | "directory";
   language?: string;
   size?: number;
 }
@@ -50,7 +50,11 @@ export interface Tool<TParams = Record<string, unknown>, TResult = ToolResult> {
   canUpdateOutput: boolean;
   validateParams(params: TParams): ValidationResult;
   shouldConfirm(params: TParams): Promise<boolean>;
-  execute(params: TParams, signal: AbortSignal, updateOutput?: (output: string) => void): Promise<TResult>;
+  execute(
+    params: TParams,
+    signal: AbortSignal,
+    updateOutput?: (output: string) => void
+  ): Promise<TResult>;
 }
 
 export interface ToolSchemaProperty {
@@ -63,7 +67,7 @@ export interface ToolSchemaProperty {
 }
 
 export interface ToolSchema {
-  type: 'object';
+  type: "object";
   properties: Record<string, ToolSchemaProperty>;
   required: string[];
   description: string;
@@ -96,14 +100,14 @@ export interface ToolCall {
   endTime?: number;
 }
 
-export type ToolCallStatus = 
-  | 'pending'
-  | 'validating' 
-  | 'awaiting_confirmation'
-  | 'executing'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
+export type ToolCallStatus =
+  | "pending"
+  | "validating"
+  | "awaiting_confirmation"
+  | "executing"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface ToolResult {
   output: string;
@@ -112,7 +116,7 @@ export interface ToolResult {
 }
 
 export interface Artifact {
-  type: 'file' | 'diff' | 'report' | 'suggestion';
+  type: "file" | "diff" | "report" | "suggestion";
   content: string;
   metadata?: Record<string, unknown>;
 }
@@ -129,7 +133,7 @@ export interface AgentConfig {
 
 export interface CodeReviewConfig {
   focusAreas: string[];
-  severity: 'low' | 'medium' | 'high';
+  severity: "low" | "medium" | "high";
   frameworks: string[];
   rules: ReviewRule[];
 }
@@ -138,7 +142,7 @@ export interface ReviewRule {
   id: string;
   name: string;
   description: string;
-  category: 'performance' | 'security' | 'maintainability' | 'style' | 'logic';
+  category: "performance" | "security" | "maintainability" | "style" | "logic";
   enabled: boolean;
 }
 
@@ -151,7 +155,7 @@ export interface AgentContext {
 }
 
 export interface AgentState {
-  status: 'idle' | 'thinking' | 'tool_calling' | 'responding' | 'error';
+  status: "idle" | "thinking" | "tool_calling" | "responding" | "error";
   currentTurn: number;
   maxTurns: number;
   tokensUsed: number;
@@ -213,7 +217,7 @@ export interface ToolRegistry {
 // Code Review Specific Types
 export interface ReviewRequest {
   target: string; // file path or directory
-  type: 'file' | 'directory' | 'diff';
+  type: "file" | "directory" | "diff";
   context?: string;
   focusAreas?: string[];
 }
@@ -227,7 +231,7 @@ export interface ReviewResult {
 
 export interface ReviewIssue {
   id: string;
-  severity: 'info' | 'warning' | 'error' | 'critical';
+  severity: "info" | "warning" | "error" | "critical";
   category: string;
   title: string;
   description: string;
@@ -240,7 +244,7 @@ export interface ReviewIssue {
 
 export interface ReviewSuggestion {
   id: string;
-  type: 'improvement' | 'refactor' | 'optimize';
+  type: "improvement" | "refactor" | "optimize";
   title: string;
   description: string;
   file: string;
@@ -260,27 +264,28 @@ export interface ReviewMetrics {
 
 // Claude API Types - 基于官方文档
 export interface ClaudeMessage {
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string | ClaudeContent[];
 }
 
 export interface ClaudeContent {
-  type: 'text' | 'tool_use' | 'tool_result';
+  type: "text" | "tool_use" | "tool_result";
   text?: string;
   id?: string;
   name?: string;
   input?: Record<string, unknown>;
   content?: string | Record<string, unknown>;
   is_error?: boolean;
+  tool_use_id?: string; // 新增：支持 tool_use_id
 }
 
 export interface ClaudeResponse {
   id: string;
-  type: 'message';
-  role: 'assistant';
+  type: "message";
+  role: "assistant";
   content: ClaudeContent[];
   model: string;
-  stop_reason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use';
+  stop_reason: "end_turn" | "max_tokens" | "stop_sequence" | "tool_use";
   stop_sequence?: string;
   usage: {
     input_tokens: number;
@@ -289,7 +294,13 @@ export interface ClaudeResponse {
 }
 
 export interface ClaudeStreamEvent {
-  type: 'message_start' | 'content_block_start' | 'content_block_delta' | 'content_block_stop' | 'message_delta' | 'message_stop';
+  type:
+    | "message_start"
+    | "content_block_start"
+    | "content_block_delta"
+    | "content_block_stop"
+    | "message_delta"
+    | "message_stop";
   message?: Partial<ClaudeResponse>;
   content_block?: Record<string, unknown>;
   delta?: Record<string, unknown>;
@@ -297,7 +308,14 @@ export interface ClaudeStreamEvent {
 }
 
 export interface StreamEvent {
-  type: 'thinking' | 'tool_start' | 'tool_progress' | 'tool_complete' | 'response' | 'complete' | 'error';
+  type:
+    | "thinking"
+    | "tool_start"
+    | "tool_progress"
+    | "tool_complete"
+    | "response"
+    | "complete"
+    | "error";
   data: {
     content?: string;
     toolCall?: ToolCall;
@@ -321,18 +339,17 @@ export class ToolExecutionError extends Error {
     public originalError: Error,
     message?: string
   ) {
-    super(message || `Tool ${toolName} execution failed: ${originalError.message}`);
-    this.name = 'ToolExecutionError';
+    super(
+      message || `Tool ${toolName} execution failed: ${originalError.message}`
+    );
+    this.name = "ToolExecutionError";
   }
 }
 
 export class ValidationError extends Error {
-  constructor(
-    public field: string,
-    message: string
-  ) {
+  constructor(public field: string, message: string) {
     super(`Validation error for ${field}: ${message}`);
-    this.name = 'ValidationError';
+    this.name = "ValidationError";
   }
 }
 

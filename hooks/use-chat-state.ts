@@ -37,6 +37,16 @@ export interface ToolCall {
 export interface StreamingMessage {
   content: string;
   toolCalls: Map<string, ToolCall>;
+  // 🎯 新增：支持分段展示
+  segments: StreamingSegment[];
+}
+
+export interface StreamingSegment {
+  id: string;
+  type: "claude_response" | "tool_call" | "tool_result";
+  content?: string;
+  toolCall?: ToolCall;
+  timestamp: number;
 }
 
 // Hook
@@ -77,7 +87,11 @@ export function useChatState(initialSessionId?: string) {
   const startLoading = useCallback(() => {
     setIsLoading(true);
     setError(null);
-    setStreamingMessage({ content: "", toolCalls: new Map() });
+    setStreamingMessage({
+      content: "",
+      toolCalls: new Map(),
+      segments: [],
+    });
   }, []);
 
   const stopLoading = useCallback(() => {

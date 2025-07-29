@@ -17,7 +17,7 @@ import { ChatEmptyState } from "./chat-empty-state";
 import { ChatHeader } from "./chat-header";
 import { ChatInput } from "./chat-input";
 import { ChatMessage } from "./chat-message";
-import { ToolCallTimeline } from "./tool-call-timeline";
+import { StreamingMessage } from "./streaming-message";
 
 interface ChatInterfaceProps {
   sessionId?: string;
@@ -99,26 +99,7 @@ export function ChatInterface({
 
           {/* 流式消息 */}
           {streamingMessage && (
-            <div>
-              {/* 工具调用时间线 */}
-              {streamingMessage.toolCalls &&
-                streamingMessage.toolCalls.size > 0 && (
-                  <ToolCallTimeline toolCalls={streamingMessage.toolCalls} />
-                )}
-
-              {/* Claude 响应 */}
-              {streamingMessage.content && (
-                <ChatMessage
-                  message={{
-                    id: "streaming",
-                    role: "assistant",
-                    content: streamingMessage.content,
-                    timestamp: Date.now(),
-                  }}
-                  isStreaming={true}
-                />
-              )}
-            </div>
+            <StreamingMessage streamingMessage={streamingMessage} />
           )}
 
           {/* 错误显示 */}
