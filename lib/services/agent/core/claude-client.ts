@@ -4,6 +4,7 @@
  * 参考 Anthropic 官方文档实现
  */
 
+import { deepClone } from "@/lib/utils";
 import {
   AgentError,
   AssistantMessage,
@@ -114,7 +115,7 @@ export class ClaudeClient {
           chunk.content_block.type === "tool_use"
         ) {
           isOutingToolCall = true;
-          toolCallChunk = chunk;
+          toolCallChunk = deepClone(chunk);
         }
         // 如果 tool_use 的 block_delta 事件，则收集工具调用参数
         else if (
