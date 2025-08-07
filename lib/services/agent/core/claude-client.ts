@@ -116,6 +116,10 @@ export class ClaudeClient {
         ) {
           isOutingToolCall = true;
           toolCallChunk = deepClone(chunk);
+          // 这里返回的 chunk.content_block.input === {}, 会导致后边的字符串链接带上 [object Object]
+          (
+            toolCallChunk.content_block as Anthropic.Messages.ToolUseBlock
+          ).input = "";
         }
         // 如果 tool_use 的 block_delta 事件，则收集工具调用参数
         else if (
