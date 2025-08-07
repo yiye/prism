@@ -3,13 +3,13 @@
  * 🌟 只支持 apiKey 和 baseUrl 配置，其他使用固定默认值
  */
 
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 // 配置文件路径
-export const PRISM_CONFIG_DIR = path.join(os.homedir());
-export const PRISM_CONFIG_FILE = path.join(PRISM_CONFIG_DIR, '.prism-config.json');
+export const PRISM_CONFIG_DIR = path.join(os.homedir(), ".prism");
+export const PRISM_CONFIG_FILE = path.join(PRISM_CONFIG_DIR, "config.json");
 
 // 简化的 Claude 配置，只保留 apiKey 和 baseUrl
 export interface ClaudeConfig {
@@ -19,7 +19,7 @@ export interface ClaudeConfig {
 
 // 固定的默认配置
 export const FIXED_AGENT_CONFIG = {
-  model: 'claude_sonnet4',
+  model: "claude_sonnet4",
   maxTokens: 16000,
   temperature: 0.7,
   sessionTimeout: 30 * 60 * 1000, // 30分钟
@@ -29,8 +29,8 @@ export const FIXED_AGENT_CONFIG = {
 
 // 默认配置
 const DEFAULT_CONFIG: ClaudeConfig = {
-  apiKey: '',
-  baseUrl: 'https://api.anthropic.com',
+  apiKey: "",
+  baseUrl: "https://api.anthropic.com",
 };
 
 /**
@@ -56,7 +56,7 @@ export class AgentConfigManager {
     // 2. 尝试加载配置文件
     if (fs.existsSync(this.configPath)) {
       try {
-        const fileConfig = JSON.parse(fs.readFileSync(this.configPath, 'utf8'));
+        const fileConfig = JSON.parse(fs.readFileSync(this.configPath, "utf8"));
         if (fileConfig.apiKey) config.apiKey = fileConfig.apiKey;
         if (fileConfig.baseUrl) config.baseUrl = fileConfig.baseUrl;
         console.log(`📄 Loaded config from: ${this.configPath}`);
@@ -86,19 +86,21 @@ export class AgentConfigManager {
     const errors: string[] = [];
 
     if (!config.apiKey) {
-      errors.push('Claude API key is required (set ANTHROPIC_API_KEY or configure in config file)');
+      errors.push(
+        "Claude API key is required (set ANTHROPIC_API_KEY or configure in config file)"
+      );
     }
 
     if (config.baseUrl) {
       try {
         new URL(config.baseUrl);
       } catch {
-        errors.push('Invalid base URL format');
+        errors.push("Invalid base URL format");
       }
     }
 
     if (errors.length > 0) {
-      throw new Error(`Configuration validation failed:\n${errors.join('\n')}`);
+      throw new Error(`Configuration validation failed:\n${errors.join("\n")}`);
     }
   }
 
@@ -132,13 +134,17 @@ export class AgentConfigManager {
     const newConfig = { ...this.config };
     if (config.apiKey !== undefined) newConfig.apiKey = config.apiKey;
     if (config.baseUrl !== undefined) newConfig.baseUrl = config.baseUrl;
-    
+
     // 验证新配置
     this.validateConfig(newConfig);
 
     // 保存到文件
-    fs.writeFileSync(this.configPath, JSON.stringify(newConfig, null, 2), 'utf8');
-    
+    fs.writeFileSync(
+      this.configPath,
+      JSON.stringify(newConfig, null, 2),
+      "utf8"
+    );
+
     // 更新内存中的配置
     this.config = newConfig;
 
@@ -150,70 +156,70 @@ export class AgentConfigManager {
    */
   reloadConfig(): void {
     this.config = this.loadConfig();
-    console.log('🔄 Configuration reloaded');
+    console.log("🔄 Configuration reloaded");
   }
 
   /**
    * 检查配置健康状态
    */
   healthCheck(): {
-    status: 'healthy' | 'warning' | 'error';
+    status: "healthy" | "warning" | "error";
     checks: Array<{
       name: string;
-      status: 'ok' | 'warning' | 'error';
+      status: "ok" | "warning" | "error";
       message: string;
     }>;
   } {
     const checks = [];
-    let overallStatus: 'healthy' | 'warning' | 'error' = 'healthy';
+    let overallStatus: "healthy" | "warning" | "error" = "healthy";
 
     // 检查 API Key
     if (this.config.apiKey) {
       checks.push({
-        name: 'Claude API Key',
-        status: 'ok' as const,
-        message: 'API key is configured'
+        name: "Claude API Key",
+        status: "ok" as const,
+        message: "API key is configured",
       });
     } else {
       checks.push({
-        name: 'Claude API Key',
-        status: 'error' as const,
-        message: 'API key is missing'
+        name: "Claude API Key",
+        status: "error" as const,
+        message: "API key is missing",
       });
-      overallStatus = 'error';
+      overallStatus = "error";
     }
 
     // 检查配置文件
     if (fs.existsSync(this.configPath)) {
       checks.push({
-        name: 'Config File',
-        status: 'ok' as const,
-        message: `Found at ${this.configPath}`
+        name: "Config File",
+        status: "ok" as const,
+        message: `Found at ${this.configPath}`,
       });
     } else {
       checks.push({
-        name: 'Config File',
-        status: 'warning' as const,
-        message: 'Using environment variables and defaults'
+        name: "Config File",
+        status: "warning" as const,
+        message: "Using environment variables and defaults",
       });
-      if (overallStatus === 'healthy') overallStatus = 'warning';
+      if (overallStatus === "healthy") overallStatus = "warning";
     }
 
     // 检查网络配置
     try {
-      new URL(this.config.baseUrl || '');
+      new URL(this.config.baseUrl || "");
       checks.push({
-        name: 'Base URL',
-        status: 'ok' as const,
-        message: `Valid URL: ${this.config.baseUrl}`
+        name: "Base URL",
+        status: "ok" as const,
+        message: `Valid URL: ${this.config.baseUrl}`,
       });
     } catch {
       checks.push({
-        name: 'Base URL',
-        status: 'error' as const,
-        message: 'Invalid base URL'
+        name: "Base URL",
+        status: "error" as const,
+        message: "Invalid base URL",
       });
-      overallStatus = 'error';
+      overallStatus = "error";
     }
 
     return { status: overallStatus, checks };
@@ -245,4 +251,4 @@ export function resetGlobalConfigManager(): void {
  */
 export function getClaudeConfig(): ClaudeConfig {
   return getGlobalConfigManager().getClaudeConfig();
-} 
+}

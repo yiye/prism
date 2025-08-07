@@ -1,19 +1,41 @@
 // Core Agent Types - 基于 qwen-code 架构设计
-export interface Message {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content: string | MessageContent[];
-  timestamp: number;
-  metadata?: MessageMetadata;
+export interface UserMessageContent {
+  type: "text" | "tool_result";
+  text?: string;
+  // for tool_result
+  tool_use_id?: string;
+  content?: ToolResult;
 }
 
-export interface MessageContent {
-  type: "text" | "code" | "file_reference" | "tool_result";
-  text?: string;
-  code?: CodeBlock;
-  file_reference?: FileReference;
-  tool_result?: ToolResult;
+export interface UserMessage {
+  id: string;
+  role: "user";
+  content: UserMessageContent[];
 }
+
+export interface ToolUseMessageContent {
+  type: "tool_use";
+  id: string;
+  name: string;
+  input: Record<string, unknown> | string;
+}
+
+export interface TextMessageContent {
+  type: "text";
+  text: string;
+}
+
+export type AssistantMessageContent =
+  | TextMessageContent
+  | ToolUseMessageContent;
+
+export interface AssistantMessage {
+  id: string;
+  role: "assistant";
+  content: AssistantMessageContent[];
+}
+
+export type Message = UserMessage | AssistantMessage; // 消息类型，包含用户消息和助手消息
 
 export interface CodeBlock {
   language: string;
@@ -145,10 +167,9 @@ export interface ReviewRule {
   category: "performance" | "security" | "maintainability" | "style" | "logic";
   enabled: boolean;
 }
-
 export interface AgentContext {
   sessionId: string;
-  messages: Message[];
+  messages: Message[]; // 消息列表，包含用户消息和助手消息
   toolRegistry: ToolRegistry;
   config: AgentConfig;
   state: AgentState;

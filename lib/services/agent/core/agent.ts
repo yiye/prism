@@ -9,8 +9,8 @@ import {
   AgentContext,
   AgentOptions,
   AgentStats,
-  Message,
   StreamEvent,
+  UserMessage,
 } from "@/types";
 
 import {
@@ -168,11 +168,15 @@ export class CodeReviewAgent {
       };
 
       // 添加用户消息
-      const userMsg: Message = {
-        id: IdGenerator.generate(),
+      const userMsg: UserMessage = {
+        id: IdGenerator.generateMessageId(),
         role: "user",
-        content: userMessage,
-        timestamp: TimeUtils.now(),
+        content: [
+          {
+            type: "text",
+            text: userMessage,
+          },
+        ],
       };
       this.context.messages.push(userMsg);
 

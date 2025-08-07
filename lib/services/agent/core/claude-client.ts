@@ -6,14 +6,14 @@
 
 import {
   AgentError,
+  AssistantMessage,
+  AssistantMessageContent,
   ClaudeContent,
   ClaudeMessage,
-  ClaudeResponse,
-  ClaudeStreamEvent,
-  Message,
-  MessageContent,
   Tool,
   ToolCall,
+  UserMessage,
+  UserMessageContent,
 } from "@/types";
 import Anthropic from "@anthropic-ai/sdk";
 import { IdGenerator } from "../utils/agent-utils";
@@ -35,6 +35,15 @@ export interface ClaudeToolDefinition {
     required: string[];
   };
 }
+
+export type RawClaudeServerError = {
+  code: "CLAUDE_SERVER_ERROR";
+  message: string;
+  timestamp: number;
+  details: {
+    error: string;
+  };
+};
 
 export class ClaudeClient {
   private anthropic: Anthropic;
@@ -65,7 +74,7 @@ export class ClaudeClient {
     messages: ClaudeMessage[],
     tools?: Tool[],
     systemPrompt?: string
-  ): AsyncGenerator<ClaudeStreamEvent, void, unknown> {
+  ): AsyncGenerator<Anthropic.Messages.RawMessageStreamEvent, void, unknown> {
     try {
       // 转换工具格式
       const claudeTools = tools?.map((tool) =>
@@ -83,68 +92,55 @@ export class ClaudeClient {
         stream: true,
       });
 
-      // 处理流式响应
+      /* 处理流式响应
+       * 如果当前响应的文本内容，则直接抛出文本内容
+       * 如果当前响应的是工具调用，则需要等待工具调用和工具参数完成生成，在抛出信息
+       */
+      let isOutingToolCall = false;
+      let toolCallChunk:
+        | Anthropic.Messages.RawContentBlockStartEvent
+        | undefined;
+
       for await (const chunk of stream) {
-        const event = this.convertChunkToEvent(chunk);
-        if (event) {
-          yield event;
+        console.log(chunk);
+        const serverError = chunk as unknown as RawClaudeServerError;
+        if (serverError.code === "CLAUDE_SERVER_ERROR") {
+          throw new Error(serverError.details.error);
+        }
+
+        // 如果 tool_use 的 block_start 事件，则开始收集工具调用
+        if (
+          chunk.type === "content_block_start" &&
+          chunk.content_block.type === "tool_use"
+        ) {
+          isOutingToolCall = true;
+          toolCallChunk = chunk;
+        }
+        // 如果 tool_use 的 block_delta 事件，则收集工具调用参数
+        else if (
+          isOutingToolCall &&
+          chunk.type === "content_block_delta" &&
+          chunk.delta.type === "input_json_delta" &&
+          toolCallChunk
+        ) {
+          (
+            toolCallChunk.content_block as Anthropic.Messages.ToolUseBlock
+          ).input += chunk.delta.partial_json;
+        }
+        // 如果 tool_use 的 block_stop 事件，则结束收集工具调用
+        else if (
+          isOutingToolCall &&
+          chunk.type === "content_block_stop" &&
+          toolCallChunk
+        ) {
+          isOutingToolCall = false;
+          yield toolCallChunk;
+        } else {
+          yield chunk;
         }
       }
     } catch (error) {
       throw this.createAPIError(error);
-    }
-  }
-
-  /**
-   * 将 SDK chunk 转换为内部事件格式
-   */
-  private convertChunkToEvent(
-    chunk: Anthropic.Messages.MessageStreamEvent
-  ): ClaudeStreamEvent | null {
-    switch (chunk.type) {
-      case "message_start":
-        return {
-          type: "message_start",
-          message: chunk.message as Partial<ClaudeResponse>,
-        };
-
-      case "content_block_start":
-        return {
-          type: "content_block_start",
-          content_block: chunk.content_block as unknown as Record<
-            string,
-            unknown
-          >,
-          index: chunk.index,
-        };
-
-      case "content_block_delta":
-        return {
-          type: "content_block_delta",
-          delta: chunk.delta as unknown as Record<string, unknown>,
-          index: chunk.index,
-        };
-
-      case "content_block_stop":
-        return {
-          type: "content_block_stop",
-          index: chunk.index,
-        };
-
-      case "message_delta":
-        return {
-          type: "message_delta",
-          delta: chunk.delta as unknown as Record<string, unknown>,
-        };
-
-      case "message_stop":
-        return {
-          type: "message_stop",
-        };
-
-      default:
-        console.debug("Unknown chunk type:", (chunk as { type: string }).type);
-        return null;
     }
   }
 
@@ -212,16 +208,16 @@ export class ClaudeClient {
   /**
    * 将工具调用结果转换为 Claude 消息格式
    */
-  convertToolCallToUserMessage(toolCalls: ToolCall[]): Message {
+  convertToolCallToUserMessage(toolCalls: ToolCall[]): UserMessage {
     const toolResults: ClaudeContent[] = [];
 
     for (const toolCall of toolCalls) {
-      if (toolCall.status === "completed" && toolCall.result) {
+      if (toolCall.status === "completed") {
         // 成功的结果
         toolResults.push({
           type: "tool_result",
           tool_use_id: toolCall.id,
-          content: toolCall.result.output,
+          content: toolCall.result?.output || "Tool execution without result",
           is_error: false,
         });
       } else if (toolCall.status === "failed") {
@@ -239,17 +235,35 @@ export class ClaudeClient {
     return {
       id: IdGenerator.generateToolResultId(),
       role: "user",
-      content: toolResults as string | MessageContent[],
-      timestamp: Date.now(),
+      content: toolResults as UserMessageContent[],
     };
   }
 
-  buildAssistantMessage(content: string): Message {
+  buildAssistantMessage(
+    id: string,
+    text: string,
+    toolCalls: ToolCall[]
+  ): AssistantMessage {
+    const content: AssistantMessageContent[] = [
+      {
+        type: "text",
+        text,
+      },
+    ];
+    if (toolCalls.length > 0) {
+      for (const toolCall of toolCalls) {
+        content.push({
+          type: "tool_use",
+          id: toolCall.id,
+          name: toolCall.tool,
+          input: toolCall.params,
+        });
+      }
+    }
     return {
-      id: IdGenerator.generateMessageId(),
+      id: id || IdGenerator.generateMessageId(),
       role: "assistant",
       content,
-      timestamp: Date.now(),
     };
   }
 

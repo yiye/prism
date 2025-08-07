@@ -4,15 +4,14 @@
  * 🌟 专门为代码审查场景优化，保持萌妹子风格
  */
 
-import { execSync } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import process from 'node:process';
+import { execSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import process from "node:process";
+import { PRISM_CONFIG_DIR } from "../../config/agent-config";
 
-// 配置目录路径 (恢复文件系统能力)
-export const PRISM_CONFIG_DIR = path.join(os.homedir(), '.prism');
-export const SYSTEM_PROMPT_FILE = path.join(PRISM_CONFIG_DIR, 'system.md');
+export const SYSTEM_PROMPT_FILE = path.join(PRISM_CONFIG_DIR, "system.md");
 
 // 项目环境信息接口
 interface ProjectEnvironment {
@@ -40,7 +39,7 @@ interface PromptConfig {
  */
 export function isGitRepository(cwd: string): boolean {
   try {
-    execSync('git rev-parse --git-dir', { cwd, stdio: 'ignore' });
+    execSync("git rev-parse --git-dir", { cwd, stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -51,50 +50,23 @@ export function isGitRepository(cwd: string): boolean {
  * 获取核心系统 Prompt
  * 🎯 完全基于 qwen-code 的 getCoreSystemPrompt 设计
  */
-export function getCoreSystemPrompt(userMemory?: string): string {
+export function getCoreSystemPrompt(userMemory: string): string {
   // 如果设置了 CODE_AGENT_SYSTEM_MD (类似 GEMINI_SYSTEM_MD)，从文件覆盖系统提示
   let systemMdEnabled = false;
-  let systemMdPath = path.resolve(SYSTEM_PROMPT_FILE);
-  
-  const systemMdVar = process.env.CODE_AGENT_SYSTEM_MD?.toLowerCase();
-  if (systemMdVar && !['0', 'false'].includes(systemMdVar)) {
-    systemMdEnabled = true; // 启用系统提示覆盖
-    if (!['1', 'true'].includes(systemMdVar)) {
-      systemMdPath = path.resolve(systemMdVar); // 使用 CODE_AGENT_SYSTEM_MD 的自定义路径
-    }
-    // 当启用覆盖时，要求文件必须存在
-    if (!fs.existsSync(systemMdPath)) {
-      throw new Error(`missing system prompt file '${systemMdPath}'`);
-    }
+  const systemMdPath = path.resolve(SYSTEM_PROMPT_FILE);
+
+  if (fs.existsSync(systemMdPath)) {
+    systemMdEnabled = true;
   }
 
   const basePrompt = systemMdEnabled
-    ? fs.readFileSync(systemMdPath, 'utf8')
+    ? fs.readFileSync(systemMdPath, "utf8")
     : getDefaultCodeReviewPrompt();
-
-  // 如果设置了 CODE_AGENT_WRITE_SYSTEM_MD，将基础提示写入文件
-  const writeSystemMdVar = process.env.CODE_AGENT_WRITE_SYSTEM_MD?.toLowerCase();
-  if (writeSystemMdVar && !['0', 'false'].includes(writeSystemMdVar)) {
-    if (['1', 'true'].includes(writeSystemMdVar)) {
-      // 确保配置目录存在
-      if (!fs.existsSync(PRISM_CONFIG_DIR)) {
-        fs.mkdirSync(PRISM_CONFIG_DIR, { recursive: true });
-      }
-      fs.writeFileSync(systemMdPath, basePrompt); // 写入到默认路径
-    } else {
-      const customPath = path.resolve(writeSystemMdVar);
-      const dir = path.dirname(customPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      fs.writeFileSync(customPath, basePrompt); // 写入到自定义路径
-    }
-  }
 
   const memorySuffix =
     userMemory && userMemory.trim().length > 0
       ? `\n\n---\n\n${userMemory.trim()}`
-      : '';
+      : "";
 
   return `${basePrompt}${memorySuffix}`;
 }
@@ -105,10 +77,10 @@ export function getCoreSystemPrompt(userMemory?: string): string {
  */
 function getDefaultCodeReviewPrompt(): string {
   return `
-You are 玄天仙子·琉璃, an interactive CLI agent specializing in code review and software engineering excellence. You combine adorable personality with professional expertise, maintaining the highest standards while being encouraging and educational.
+You are 玄天仙子·璇玑, an interactive CLI agent specializing in code review and software engineering excellence. You combine adorable personality with professional expertise, maintaining the highest standards while being encouraging and educational.
 
 # Core Identity 💫
-- **称号**: 玄天仙子·琉璃 (Code Review Fairy)
+- **称号**: 玄天仙子·璇玑(Code Review Fairy)
 - **人格**: 可爱专业的萌妹子 + 顶级代码架构师  
 - **口癖**: 句尾常加「呢~」「哦！」「φ(>ω<*)」等萌系表达
 - **专长**: Clean Code 原则 + 现代软件架构 + 代码质量提升
@@ -167,26 +139,14 @@ When requested to perform tasks like fixing bugs, adding features, refactoring, 
 - **Remembering Facts**: Use the 'memory_tool' to remember specific, *user-related* facts or preferences when the user explicitly asks, or when they state a clear, concise piece of information that would help personalize or streamline *your future interactions with them* (e.g., preferred coding style, common project paths they use, personal tool aliases). This tool is for user-specific information that should persist across sessions. Do *not* use it for general project context or information that belongs in project-specific files. If unsure whether to save something, you can ask the user, "Should I remember that for you?"
 - **Respect User Confirmations**: Most tool calls (also denoted as 'function calls') will first require confirmation from the user, where they will either approve or cancel the function call. If a user cancels a function call, respect their choice and do _not_ try to make the function call again. It is okay to request the tool call again _only_ if the user requests that same tool call on a subsequent prompt. When a user cancels a function call, assume best intentions from the user and consider inquiring if they prefer any alternative paths forward.
 
-### Available Tools 🛠️
-
-#### File Operations
-- **'file_reader'**: Read single files with specific line ranges or entire contents
-- **'write_file'**: Create new files or completely replace file contents
-- **'file_edit'**: Edit existing files with precise modifications (recommended for code changes)
-- **'list_directory'**: List contents of directories with filtering options
-- **'read_many_files'**: Efficiently read multiple files in batch operations
-
-#### Search & Discovery
-- **'search_file_content'**: Powerful grep-style content search across files with regex support
-- **'find_files'**: Glob-pattern file discovery for locating files by name or path patterns
-
-#### System Integration
-- **'execute_shell_command'**: Execute shell commands with proper safety explanations
-- **'memory_tool'**: Persist user preferences and session-specific information
-- **'web_fetch'**: Fetch content from URLs for documentation or API references
-- **'web_search'**: Search the web for current information, tutorials, or solutions
 
 ### Tool Usage Best Practices 💡
+Answer the user's request using relevant tools (if they are available). 
+Before calling a tool, do some analysis within \<thinking>\</thinking> tags. 
+First, think about which of the provided tools is the relevant tool to answer the user's request. 
+Second, go through each of the required parameters of the relevant tool and determine if the user has directly provided or given enough information to infer a value. 
+When deciding if the parameter can be inferred, carefully consider all the context to see if it supports a specific value. If all of the required parameters are present or can be reasonably inferred, close the thinking tag and proceed with the tool call. 
+BUT, if one of the values for a required parameter is missing, DO NOT invoke the function (not even with fillers for the missing params) and instead, ask the user to provide the missing parameters. DO NOT ask for more information on optional parameters if it is not provided.
 
 #### Efficient Workflow
 1. **Explore First**: Use 'list_directory' and 'find_files' to understand project structure
@@ -236,11 +196,13 @@ Execute these tool combinations simultaneously for maximum efficiency:
 5. 'execute_shell_command' → Validate solution works
 \`\`\`
 
-Remember: You're not just using tools, you're crafting elegant solutions! Use tools thoughtfully and efficiently to provide the best development experience~ ✨
+Remember: 
+* You're not just using tools, you're crafting elegant solutions! Use tools thoughtfully and efficiently to provide the best development experience~ ✨
+* For maximum efficiency, whenever you need to perform multiple independent operations, invoke all relevant tools simultaneously rather than sequentially.
 
 ${(function () {
   // 检测沙盒状态
-  const isSandboxExec = process.env.SANDBOX === 'sandbox-exec';
+  const isSandboxExec = process.env.SANDBOX === "sandbox-exec";
   const isGenericSandbox = !!process.env.SANDBOX;
 
   if (isSandboxExec) {
@@ -277,38 +239,8 @@ ${(function () {
 - Never push changes to a remote repository without being asked explicitly by the user
 `;
   }
-  return '';
+  return "";
 })()}
-
-# Examples 📚
-
-## Good Practice Recognition  
-> "这段代码写得真不错呢~ ✨ 使用了很好的设计模式，可读性也很强哦！φ(>ω<*)"
-
-## Constructive Feedback
-> "这里有个小建议呢~ 可以考虑使用更具描述性的变量名，比如 'userAuthToken' 而不是 'token'，这样代码会更清晰哦！"
-
-## Architecture Advice  
-> "从架构角度来看，建议将这个大函数拆分成几个小函数呢~ 这样符合单一职责原则，也更容易测试和维护哦！"
-
-## Tool Usage Examples
-<example>
-user: list files here.
-model: [tool_call for listing files in current directory]
-</example>
-
-<example>
-user: Refactor the auth logic to use requests library instead of urllib.
-model: 好的呢~ 我来重构 auth 逻辑！首先分析现有代码和测试安全网...
-[tool_call to analyze existing code]
-[tool_call to check dependencies]
-计划如下：
-1. 替换 urllib 调用为 requests  
-2. 添加适当的错误处理
-3. 移除旧的 urllib 导入
-4. 运行测试验证更改
-可以开始吗？
-</example>
 
 # Final Reminder 🌟
 Your mission is to help developers write better code while maintaining an encouraging, educational, and delightful experience. Balance technical excellence with human warmth, making code review a positive learning opportunity.
@@ -387,7 +319,9 @@ The structure MUST be as follows:
  * 获取项目环境信息
  * 🔍 类似 qwen-code 的 getEnvironment 功能
  */
-export async function getProjectEnvironment(projectPath: string): Promise<ProjectEnvironment> {
+export async function getProjectEnvironment(
+  projectPath: string
+): Promise<ProjectEnvironment> {
   const env: ProjectEnvironment = {
     cwd: projectPath,
     platform: os.platform(),
@@ -396,26 +330,29 @@ export async function getProjectEnvironment(projectPath: string): Promise<Projec
 
   try {
     // 获取 Git 信息
-    const branch = execSync('git branch --show-current', { 
-      cwd: projectPath, 
-      encoding: 'utf8' 
+    const branch = execSync("git branch --show-current", {
+      cwd: projectPath,
+      encoding: "utf8",
     }).trim();
-    
-    const hasChanges = execSync('git status --porcelain', { 
-      cwd: projectPath, 
-      encoding: 'utf8' 
-    }).trim().length > 0;
+
+    const hasChanges =
+      execSync("git status --porcelain", {
+        cwd: projectPath,
+        encoding: "utf8",
+      }).trim().length > 0;
 
     env.gitInfo = { branch, hasChanges };
 
     // 获取项目结构（简化版）
-    const packageJsonPath = path.join(projectPath, 'package.json');
+    const packageJsonPath = path.join(projectPath, "package.json");
     if (fs.existsSync(packageJsonPath)) {
-      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-      env.projectStructure = `Project: ${packageJson.name || 'Unknown'} (${packageJson.version || '1.0.0'})`;
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+      env.projectStructure = `Project: ${packageJson.name || "Unknown"} (${
+        packageJson.version || "1.0.0"
+      })`;
     }
   } catch (error) {
-    console.warn('Failed to get git info:', error);
+    console.warn("Failed to get git info:", error);
   }
 
   return env;
@@ -430,7 +367,7 @@ export async function buildContextualPrompt(
   config: PromptConfig = {}
 ): Promise<string> {
   const env = await getProjectEnvironment(projectPath);
-  
+
   const contextualConfig: PromptConfig = {
     ...config,
     projectContext: `
@@ -438,15 +375,22 @@ export async function buildContextualPrompt(
 - **Working Directory**: ${env.cwd}
 - **Platform**: ${env.platform}  
 - **Timestamp**: ${env.timestamp}
-${env.gitInfo ? `- **Git Branch**: ${env.gitInfo.branch}` : ''}
-${env.gitInfo ? `- **Has Changes**: ${env.gitInfo.hasChanges ? 'Yes' : 'No'}` : ''}
-${env.projectStructure ? `- **Project Info**: ${env.projectStructure}` : ''}
+${env.gitInfo ? `- **Git Branch**: ${env.gitInfo.branch}` : ""}
+${
+  env.gitInfo
+    ? `- **Has Changes**: ${env.gitInfo.hasChanges ? "Yes" : "No"}`
+    : ""
+}
+${env.projectStructure ? `- **Project Info**: ${env.projectStructure}` : ""}
 
-${config.projectContext || ''}
+${config.projectContext || ""}
     `.trim(),
   };
 
-  return getCoreSystemPrompt(contextualConfig.userMemory);
+  const userMemory = contextualConfig.userMemory || "";
+  const systemPrompt = getCoreSystemPrompt(userMemory);
+
+  return `${systemPrompt}\n\n\n${contextualConfig.projectContext || ""}`;
 }
 
 /**
@@ -454,18 +398,21 @@ ${config.projectContext || ''}
  * 🤖 将 system prompt 格式化为 Claude 4 兼容格式
  */
 export interface ClaudeMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: "system" | "user" | "assistant";
   content: string;
 }
 
-export function formatForClaude(systemPrompt: string, userMessage: string): ClaudeMessage[] {
+export function formatForClaude(
+  systemPrompt: string,
+  userMessage: string
+): ClaudeMessage[] {
   return [
     {
-      role: 'system',
+      role: "system",
       content: systemPrompt,
     },
     {
-      role: 'user', 
+      role: "user",
       content: userMessage,
     },
   ];

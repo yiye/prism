@@ -7,11 +7,10 @@ import {
   AgentContext,
   ClaudeContent,
   ClaudeMessage,
-  ClaudeStreamEvent,
   StreamEvent,
   ToolCall,
 } from "@/types";
-
+import Anthropic from "@anthropic-ai/sdk";
 import { ToolRegistry } from "../tools/tool-registry";
 import { ToolScheduler, type ExecutionOptions } from "../tools/tool-scheduler";
 import { ClaudeClient } from "./claude-client";
@@ -50,25 +49,30 @@ export class AgentLoopExecutor {
           data: { content: `Turn ${attempts + 1}: Analyzing your request...` },
         };
 
+        const availableTools = this.getAvailableTools();
+
         // 流式调用 Claude API
         const responseStream = this.claudeClient.generateContentStream(
           claudeMessages,
-          this.getAvailableTools(),
+          availableTools,
           systemPrompt
         );
 
         // 处理流式响应
         let accumulatedContent = "";
         let pendingToolCalls: ToolCall[] = [];
+        let messageId = "";
 
         console.log(`turn ${attempts + 1}, content: \n`);
-        for await (const event of responseStream) {
+        for await (const chunk of responseStream) {
           if (abortController?.signal.aborted) {
             return;
           }
-
-          const streamResult = this.processStreamEvent(
-            event,
+          if (chunk.type === "message_start") {
+            messageId = chunk.message.id;
+          }
+          const streamResult = this.processStreamChunk(
+            chunk,
             accumulatedContent,
             pendingToolCalls
           );
@@ -76,9 +80,9 @@ export class AgentLoopExecutor {
           if (streamResult.events) {
             for (const streamEvent of streamResult.events) {
               if (streamEvent.type === "response") {
-                console.log(streamEvent.data.content);
+                // console.log(streamEvent.data.content);
               } else {
-                console.log(streamEvent);
+                // console.log(streamEvent);
               }
               // tool_start 的消息在 executeToolsStream 中返回，不需要在这里返回
               if (streamEvent.type !== "tool_start") {
@@ -98,10 +102,15 @@ export class AgentLoopExecutor {
             (toolCall) => toolCall.tool
           )}`
         );
-        // 🎯 关键修复：保存 Claude 的响应内容到 context
+        // 保存 Claude 的响应内容到 context
         if (accumulatedContent.trim()) {
-          const assistantMessage =
-            this.claudeClient.buildAssistantMessage(accumulatedContent);
+          // TODO: 需要添加 tool_use 信息，解决后边的报错 Each `tool_result` block must have a corresponding `tool_use` block in the previous message
+          // TODO: message Id 使用 Message_start 消息里的
+          const assistantMessage = this.claudeClient.buildAssistantMessage(
+            messageId,
+            accumulatedContent,
+            pendingToolCalls
+          );
           context.messages.push(assistantMessage);
         }
 
@@ -115,11 +124,7 @@ export class AgentLoopExecutor {
 
           const completedToolCalls: ToolCall[] = [];
           for await (const event of toolStream) {
-            if (
-              event.type === "tool_complete" &&
-              event.data.toolCall &&
-              event.data.toolCall.status === "completed"
-            ) {
+            if (event.type === "tool_complete" && event.data.toolCall) {
               completedToolCalls.push(event.data.toolCall);
             }
             // 处理流式事件（给UI）
@@ -173,8 +178,8 @@ export class AgentLoopExecutor {
   /**
    * 处理流式事件
    */
-  private processStreamEvent(
-    event: ClaudeStreamEvent,
+  private processStreamChunk(
+    chunk: Anthropic.Messages.RawMessageStreamEvent,
     currentContent: string,
     currentToolCalls: ToolCall[]
   ): {
@@ -184,26 +189,33 @@ export class AgentLoopExecutor {
   } {
     const events: StreamEvent[] = [];
 
-    switch (event.type) {
+    switch (chunk.type) {
       case "content_block_delta":
-        if (event.delta?.text && typeof event.delta.text === "string") {
+        if (chunk.delta?.type === "text_delta" && chunk.delta.text) {
           // 累积内容用于内部状态管理
-          currentContent += event.delta.text;
+          currentContent += chunk.delta.text;
           // 发送增量内容给前端，实现打字机效果
           events.push({
             type: "response",
-            data: { content: event.delta.text },
+            data: { content: chunk.delta.text },
           });
         }
         break;
 
       case "content_block_start":
-        if (event.content_block?.type === "tool_use") {
-          const contentBlock = event.content_block as Record<string, unknown>;
+        if (chunk.content_block?.type === "tool_use") {
+          const contentBlock =
+            chunk.content_block as Anthropic.Messages.ToolUseBlock;
+          const input = contentBlock.input as string;
+          let params: Record<string, unknown> = {};
+          if (typeof input === "string" && input?.startsWith("{")) {
+            const parsedInput = JSON.parse(input);
+            params = parsedInput;
+          }
           const toolCall: ToolCall = {
             id: String(contentBlock.id || ""),
             tool: String(contentBlock.name || ""),
-            params: {},
+            params,
             status: "pending",
           };
           currentToolCalls.push(toolCall);
@@ -290,12 +302,10 @@ export class AgentLoopExecutor {
    * 构建 Claude 消息格式
    */
   private buildClaudeMessages(context: AgentContext): ClaudeMessage[] {
-    return context.messages
-      .filter((msg) => msg.role !== "system")
-      .map((msg) => ({
-        role: msg.role as "user" | "assistant",
-        content: this.convertMessageContent(msg.content),
-      }));
+    return context.messages.map((msg) => ({
+      role: msg.role as "user" | "assistant",
+      content: this.convertMessageContent(msg.content),
+    }));
   }
 
   /**
